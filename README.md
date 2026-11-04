@@ -34,19 +34,23 @@ Server Deck размещается на отдельном Linux VPS. Управ
 
 ## Установка одной командой
 
-На компьютере оператора нужен OpenSSH-клиент. Серверная часть установщика поддерживает **Ubuntu 24.04 и Debian 12 с systemd**. На VPS нужны `curl`, доверенные CA-сертификаты и Python 3.9–3.12. Windows и macOS используются как клиенты установки на Linux VPS.
+На компьютере оператора нужен OpenSSH-клиент. Серверная часть установщика поддерживает **Ubuntu 24.04 и Debian 12 с systemd**. Недостающие зависимости на VPS устанавливаются автоматически; используется системный Python 3.9–3.12. Windows и macOS используются как клиенты установки на Linux VPS.
 
 Замените `VPS` своим адресом и выполните в терминале Windows, macOS или Linux:
 
 ```sh
-ssh -t root@VPS "curl -fsSL https://raw.githubusercontent.com/Atlantik56/ServerDeck/main/scripts/install.sh | bash"
+ssh -t root@VPS "bash -o pipefail -c 'if ! command -v curl >/dev/null || [ ! -s /etc/ssl/certs/ca-certificates.crt ]; then apt-get -o APT::Update::Error-Mode=any update && apt-get install -y --no-install-recommends curl ca-certificates || exit; fi; curl -fsSL https://raw.githubusercontent.com/Atlantik56/ServerDeck/main/scripts/install.sh | bash'"
 ```
 
-Если вы уже вошли на нужный Linux VPS:
+Если вы уже вошли на нужный Linux VPS под пользователем с sudo, выполните команду ниже. Под root уберите начальное `sudo`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Atlantik56/ServerDeck/main/scripts/install.sh | bash
+sudo bash -o pipefail -c 'if ! command -v curl >/dev/null || [ ! -s /etc/ssl/certs/ca-certificates.crt ]; then apt-get -o APT::Update::Error-Mode=any update && apt-get install -y --no-install-recommends curl ca-certificates || exit; fi; curl -fsSL https://raw.githubusercontent.com/Atlantik56/ServerDeck/main/scripts/install.sh | bash'
 ```
+
+Команда сначала обеспечивает наличие `curl` и доверенных CA-сертификатов, чтобы загрузить мастер. При необходимости bootstrap также устанавливает Python и `tar`. После подтверждения плана и проверки чистого хоста установщик **обязательно обновляет индекс APT и выполняет upgrade пакетов ОС**, затем доустанавливает недостающие компоненты панели. Без успешного завершения этих шагов установка Server Deck не продолжается. Под root `sudo` не требуется; под другим пользователем используются права sudo.
+
+Обновление соответствует `sudo apt update && sudo apt upgrade -y`: для скрипта используются `apt-get`, разрешение новых зависимостей, запрет удаления пакетов и сохранение локальных конфигураций. Автоматической перезагрузки VPS нет. Пакетные скрипты ОС могут перезапускать службы, поэтому мастер рассчитан на отдельный хост.
 
 Мастер покажет план установки и запросит подтверждение. Указывайте домен, если хотите доверенный HTTPS через Certbot / Let's Encrypt. Если оставить поле домена пустым, используется публичный IPv4 и свободный случайный высокий HTTPS-порт с собственным сертификатом. Браузер предупредит о доверии: перед вводом данных сверьте отпечаток сертификата с выводом установщика через SSH. Домен можно подключить позднее в настройках панели.
 

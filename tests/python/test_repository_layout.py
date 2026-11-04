@@ -54,7 +54,7 @@ class InstallationLayout(unittest.TestCase):
                'frontend/static/native-theme.css':'body{}','frontend/pwa/login/index.html':'<html>login</html>',
                'frontend/pwa/pwa/login.js':'// login\n','installer/deploy_linux.py':'# deploy\n',
                'installer/render.py':'# render\n','installer/reset_bootstrap.py':'# bootstrap\n',
-               'installer/reset_account.py':'# reset\n'}
+               'installer/reset_account.py':'# reset\n','scripts/install.sh':'#!/bin/bash\n'}
         for name,body in files.items():
             path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(body)
         return files

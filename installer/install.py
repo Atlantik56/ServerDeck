@@ -94,8 +94,8 @@ def config(args):
 
 def source_files(root):
     root = pathlib.Path(root)
-    required = ['backend/server.py', 'backend/web_auth.py', 'backend/account_helper.py', 'backend/deployment_helper.py', 'frontend/static/index.html', 'frontend/pwa/login/index.html', 'installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py']
-    if any((root / name).is_symlink() for name in ('backend', 'frontend', 'frontend/static', 'frontend/pwa', 'installer')) or any(not (root / p).is_file() or (root / p).is_symlink() for p in required):
+    required = ['backend/server.py', 'backend/web_auth.py', 'backend/account_helper.py', 'backend/deployment_helper.py', 'frontend/static/index.html', 'frontend/pwa/login/index.html', 'installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py', 'scripts/install.sh']
+    if any((root / name).is_symlink() for name in ('backend', 'frontend', 'frontend/static', 'frontend/pwa', 'installer', 'scripts')) or any(not (root / p).is_file() or (root / p).is_symlink() for p in required):
         raise ValueError('Исходники неполные; укажите корень чистого пакета ServerDeck с backend и frontend')
     # Prevent accidental installation of an operator's private registry defaults.
     tree = ast.parse((root / 'backend/server.py').read_text(encoding='utf-8'))
@@ -107,7 +107,7 @@ def source_files(root):
         rel = p.relative_to(root)
         if not p.is_file():
             continue
-        allowed = (len(rel.parts) == 2 and rel.parts[0] == 'backend' and p.suffix == '.py' and not p.name.startswith(('test_', 'check_', 'prepare_'))) or (len(rel.parts) >= 3 and rel.parts[0] == 'frontend' and rel.parts[1] in ('static', 'pwa') and p.suffix in RUNTIME_SUFFIXES - {'.py'}) or rel.as_posix() in ('installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py')
+        allowed = (len(rel.parts) == 2 and rel.parts[0] == 'backend' and p.suffix == '.py' and not p.name.startswith(('test_', 'check_', 'prepare_'))) or (len(rel.parts) >= 3 and rel.parts[0] == 'frontend' and rel.parts[1] in ('static', 'pwa') and p.suffix in RUNTIME_SUFFIXES - {'.py'}) or rel.as_posix() in ('installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py', 'scripts/install.sh')
         if allowed:
             if any((root.joinpath(*rel.parts[:count])).is_symlink() for count in range(1, len(rel.parts) + 1)) or p.stat().st_size > 8 * 1024 * 1024:
                 raise ValueError('Неподдерживаемый файл пакета: ' + str(rel))
@@ -185,6 +185,11 @@ def install_ssh(source, files, cfg, request_path, temp):
     common[common.index('StrictHostKeyChecking=ask')] = 'StrictHostKeyChecking=yes'
     if cfg['user'] != 'root':
         run(['ssh'] + common + [target, 'sudo -n true'])
+    # The target may not have Python or tar yet. Feed the shared bootstrap
+    # directly to Bash over SSH before creating or extracting the source bundle.
+    prefix = '' if cfg['user'] == 'root' else 'sudo -n -- '
+    run(['ssh'] + common + [target, prefix + 'bash -s -- --bootstrap-only'],
+        input=(source / 'scripts/install.sh').read_text(encoding='utf-8'), text=True)
     staged = subprocess.check_output(['ssh'] + common + [target, 'umask 077; mktemp -d /tmp/serverdeck-install.XXXXXXXX'], text=True).strip()
     if not re.fullmatch(r'/tmp/serverdeck-install\.[A-Za-z0-9]{8}', staged):
         raise ValueError('Не удалось создать защищённый каталог подготовки на VPS')
@@ -216,7 +221,7 @@ def main(argv=None):
     os.umask(0o077)
     try:
         cfg = config(args)
-        print(json.dumps(dict(operation='fresh-install', config=cfg, linuxHosts=['Ubuntu 24.04', 'Debian 12'], packages=['python3', 'openssh-client', 'openssh-server', 'openssl', 'ca-certificates', 'caddy', 'certbot'], publicPorts=[80, 443] if cfg['domain'] else [cfg['httpsPort'] or 'random-free-high-port'], privatePorts=[8765, 8766, 8768], registry='empty', certificate='Certbot webroot + renewal timer' if cfg['domain'] else 'self-signed HTTPS; browser warning until a domain is configured', existingServices='abort on occupied ports or existing installation'), ensure_ascii=False, indent=2))
+        print(json.dumps(dict(operation='fresh-install', config=cfg, linuxHosts=['Ubuntu 24.04', 'Debian 12'], packages=['python3', 'openssh-client', 'openssh-server', 'openssl', 'ca-certificates', 'curl', 'tar', 'iproute2', 'util-linux', 'passwd', 'caddy', 'certbot'], osPreparation='mandatory apt update then apt upgrade -y before panel installation; install missing dependencies; no automatic reboot', publicPorts=[80, 443] if cfg['domain'] else [cfg['httpsPort'] or 'random-free-high-port'], privatePorts=[8765, 8766, 8768], registry='empty', certificate='Certbot webroot + renewal timer' if cfg['domain'] else 'self-signed HTTPS; browser warning until a domain is configured', existingServices='abort on occupied ports or existing installation'), ensure_ascii=False, indent=2))
         if args.dry_run:
             return 0
         if not args.yes and input('Установить по этому плану на отдельный Linux-хост? [yes/нет]: ').strip().lower() != 'yes':

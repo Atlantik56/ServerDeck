@@ -190,7 +190,7 @@ class RenewalTests(unittest.TestCase):
 
 class PackageTests(unittest.TestCase):
     def fixture(self, root):
-        for name in ['backend/server.py', 'backend/web_auth.py', 'backend/account_helper.py', 'backend/deployment_helper.py', 'frontend/static/index.html', 'frontend/pwa/login/index.html', 'installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py']:
+        for name in ['backend/server.py', 'backend/web_auth.py', 'backend/account_helper.py', 'backend/deployment_helper.py', 'frontend/static/index.html', 'frontend/pwa/login/index.html', 'installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py', 'scripts/install.sh']:
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('DEFAULTS=[]\n' if name == 'backend/server.py' else '')

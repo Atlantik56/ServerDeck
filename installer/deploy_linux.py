@@ -29,6 +29,45 @@ HOME = pathlib.Path('/var/lib/serverdeck')
 HELPERS = pathlib.Path('/usr/local/lib/server-deck')
 UNIT_DIR = pathlib.Path('/etc/systemd/system')
 
+REQUIRED_PACKAGES = ('python3', 'openssh-client', 'openssh-server', 'openssl',
+                     'ca-certificates', 'curl', 'tar', 'iproute2', 'util-linux',
+                     'passwd', 'caddy', 'certbot')
+REQUIRED_COMMANDS = ('python3', 'ssh', 'scp', 'ssh-keygen', 'sshd', 'openssl',
+                     'curl', 'tar', 'ss', 'runuser', 'useradd', 'caddy', 'certbot')
+
+
+def missing_packages(packages):
+    missing = []
+    for package in packages:
+        result = subprocess.run(['dpkg-query', '-W', '-f=${Status}', package],
+                                capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        if result.returncode or result.stdout.strip() not in ('install ok installed', 'hold ok installed'):
+            missing.append(package)
+    return missing
+
+
+def prepare_packages():
+    # This runs only after the fresh-host checks and the operator's installation
+    # confirmation, for both local and SSH installation entry points.
+    os.environ['PATH'] = os.pathsep.join(dict.fromkeys(os.get_exec_path() + ['/usr/sbin', '/sbin']))
+    print('Обязательное обновление ОС: apt update, затем apt upgrade -y.')
+    env = dict(os.environ, DEBIAN_FRONTEND='noninteractive', NEEDRESTART_SUSPEND='1', NEEDRESTART_MODE='l')
+    options = dict(env=env, stdin=subprocess.DEVNULL)
+    run(['apt-get', '-o', 'APT::Update::Error-Mode=any', 'update'], **options)
+    run(['apt-get', '-y', '--with-new-pkgs', '--no-remove',
+         '-o', 'Dpkg::Options::=--force-confold', 'upgrade'], **options)
+    missing = missing_packages(REQUIRED_PACKAGES)
+    if missing:
+        print('Устанавливаю отсутствующие зависимости: ' + ', '.join(missing))
+        run(['apt-get', 'install', '-y', '--no-upgrade', '--no-remove', '--no-install-recommends',
+             '-o', 'Dpkg::Options::=--force-confold', *missing], **options)
+    pending = missing_packages(REQUIRED_PACKAGES)
+    absent = [name for name in REQUIRED_COMMANDS if shutil.which(name) is None]
+    if pending or absent:
+        raise RuntimeError('Зависимости не готовы: ' + ', '.join(pending + absent) + '. Установка панели остановлена.')
+    print('Обновление ОС выполнено; зависимости проверены. Автоматическая перезагрузка не выполняется.')
+
+
 
 def run(command, private=False, **kwargs):
     result = subprocess.run(command, text=True, stdout=subprocess.PIPE if private else None, stderr=subprocess.PIPE if private else None, **kwargs)
@@ -256,10 +295,8 @@ def loopback_helper(owner, key_name, helper_name, ssh_port=22):
 
 
 def install(source, data, paths):
-    print('Проверка чистого хоста пройдена. Устанавливаю пакеты и отдельные службы панели.')
-    env = dict(os.environ, DEBIAN_FRONTEND='noninteractive', NEEDRESTART_SUSPEND='1', NEEDRESTART_MODE='l')
-    run(['apt-get', '-o', 'APT::Update::Error-Mode=any', 'update'], env=env)
-    run(['apt-get', 'install', '-y', '--no-upgrade', '--no-install-recommends', 'python3', 'openssh-client', 'openssh-server', 'openssl', 'ca-certificates', 'caddy', 'certbot'], env=env)
+    print('Проверка чистого хоста пройдена. Подготавливаю ОС перед установкой панели.')
+    prepare_packages()
     run(['systemctl', 'stop', 'caddy.service'])
     run(['useradd', '--system', '--home-dir', str(HOME), '--create-home', '--shell', '/usr/sbin/nologin', 'serverdeck'])
     owner = pwd.getpwnam('serverdeck')
