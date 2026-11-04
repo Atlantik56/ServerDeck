@@ -379,14 +379,8 @@ def update_plan(req):
         release=json.load(urllib.request.urlopen('https://api.github.com/repos/Liafanx/MTProxyL/releases?per_page=50',timeout=20))
         candidates=[x['tag_name'] for x in release if not x.get('draft') and not x.get('prerelease') and (x['tag_name'].startswith('mtproxyl-panel-v') if component=='mtproxyl-panel' else re.fullmatch(r'v?\d+\.\d+\.\d+',x['tag_name']))]
         if not candidates or candidates[0]!=version:raise ValueError('Последний релиз изменился или не подтверждён. Обновите список версий и создайте новый план.')
-    if component=='mtproxyl' and pathlib.Path('/usr/local/sbin/mtproxyl-zapret2-start.sh.before-awg-exclude').exists():
-        raise ValueError('Есть локальная правка исключения awg* для Zapret2. Обновление менеджера заблокировано до проверки сохранности этой правки; рабочий VPN остаётся без изменений.')
     if component=='mtproxyl':
-        if tuple(map(int,re.findall(r'\d+',version)))<=tuple(map(int,re.findall(r'\d+',current.get('mtproxyl','')))):
-            raise ValueError('Нужна более новая версия менеджера')
-        runtime=SOFTWARE.inventory()
-        if runtime['components']['awg']['protected'] and subprocess.run(['systemctl','is-active','--quiet','mtproxyl-zapret2.service'],capture_output=True).returncode==0:
-            raise ValueError('На сервере одновременно работают AWG и Zapret2. Обновление менеджера, способное заменить правила Zapret2, заблокировано до отдельной проверки совместимости.')
+        return MANAGER.plan(req)
     preview={'title':'Обновление · '+component,'component':component,'version':version,'current':current,'impact':'Возможен разрыв подключений обслуживаемого компонента. Перезагрузка ОС автоматически не выполняется.','backupRequired':True,'rollback':'Резервная копия конфигурации не откатывает пакеты ОС или миграции БД. Предыдущая версия движка может потребовать отдельного восстановления.'}
     if component=='telemt-rollback':preview.update(title='Откат движка Telemt',version='Предыдущая версия, сохранённая на сервере')
     if component in ('os','os-index'):
@@ -408,7 +402,9 @@ def update_plan(req):
     return dict(revision=rev,summary=preview,request=dict(kind='update',component=component,version=version))
 
 def apply_update(req):
-    component=req['component'];version=req.get('version','');before=versions()
+    component=req['component'];version=req.get('version','')
+    if component=='mtproxyl':return MANAGER.apply(req)
+    before=versions()
     if component in ('lucx','mtproxyl-panel','awg','fail2ban'):return SOFTWARE.apply(req)
     if component=='os-index':
         run(['apt-get','-o','APT::Update::Error-Mode=any','update'],300)
@@ -420,8 +416,8 @@ def apply_update(req):
     elif component=='telemt-rollback':
         run(['/opt/mtproxyl/mtproxyl.sh','engine','rollback','--yes'],1500)
         if versions().get('telemt')==before.get('telemt'):raise RuntimeError('Откат не подтверждён: версия движка не изменилась')
-    elif component in ('mtproxyl','mtproxyl-panel'):
-        run(['/opt/mtproxyl/mtproxyl.sh']+(['update','--no-restart'] if component=='mtproxyl' else ['panel','update']),1500)
+    elif component=='mtproxyl-panel':
+        run(['/opt/mtproxyl/mtproxyl.sh','panel','update'],1500)
         target=version.removeprefix('mtproxyl-panel-').lstrip('v')
         if versions().get(component,'').lstrip('v')!=target:raise RuntimeError('Версия после обновления не совпала с планом. Требуется проверка; автоматического повтора нет.')
     else:
@@ -557,6 +553,8 @@ def dispatch(req,source=''):
 
 from software_remote import SoftwareAdapter
 SOFTWARE=SoftwareAdapter(globals())
+from mtproxyl_update_remote import ManagerCodeUpdate
+MANAGER=ManagerCodeUpdate(MT,STATE,{'versions':versions,'baseline':baseline,'log':update_log})
 from reboot_remote import RemoteReboot
 REBOOT=RemoteReboot(STATE)
 from service_restart_remote import RemoteServiceRestart

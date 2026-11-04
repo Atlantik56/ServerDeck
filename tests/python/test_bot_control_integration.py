@@ -19,7 +19,7 @@ class ControlIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             for name in ('control_remote.py', 'panel_tls.py', 'software_remote.py',
-                         'reboot_remote.py', 'service_restart_remote.py'):
+                         'reboot_remote.py', 'service_restart_remote.py', 'mtproxyl_update_remote.py'):
                 (root / name).write_text((source / name).read_text())
             control = Control(root, lambda: [], root)
             compile(control.remote, '<embedded-adapter>', 'exec')

@@ -82,6 +82,8 @@ class Control:
             self.remote=self.remote.replace('from panel_tls import pinned_https_connection',(pathlib.Path(root)/'panel_tls.py').read_text())
         if 'from software_remote import SoftwareAdapter' in self.remote:
             self.remote=self.remote.replace('from software_remote import SoftwareAdapter',(pathlib.Path(root)/'software_remote.py').read_text())
+        if 'from mtproxyl_update_remote import ManagerCodeUpdate' in self.remote:
+            self.remote=self.remote.replace('from mtproxyl_update_remote import ManagerCodeUpdate',(pathlib.Path(root)/'mtproxyl_update_remote.py').read_text())
         if 'from reboot_remote import RemoteReboot' in self.remote:
             self.remote=self.remote.replace('from reboot_remote import RemoteReboot',(pathlib.Path(root)/'reboot_remote.py').read_text())
         if 'from service_restart_remote import RemoteServiceRestart' in self.remote:
@@ -225,7 +227,7 @@ class Control:
             entries=self.release_catalog().get(component,{}).get('releases',[])
             if not version or version not in [x['version'] for x in entries]:raise ValueError('Выберите проверенный опубликованный релиз')
             if component=='mtproxyl':
-                if not entries or version!=entries[0]['version']:raise ValueError('Штатная команда этого компонента устанавливает только последний релиз')
+                if not entries or version!=entries[0]['version']:raise ValueError('Обновите список релизов и выберите последний стабильный выпуск MTProxyL')
         remote=self.ssh(s,dict(data,op='plan'))
         if kind=='restore':remote['request']['backup']=data['backup']
         pid=secrets.token_hex(16);plan=dict(id=pid,server=s['id'],host=s['host'],createdAt=time.time(),expiresAt=time.time()+300,used=False,**remote)
