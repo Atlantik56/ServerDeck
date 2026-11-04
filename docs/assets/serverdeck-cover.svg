@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" role="img" aria-labelledby="title description">
+  <title id="title">Server Deck</title>
+  <desc id="description">Серверы, сервисы и VPN в одной точке управления. Синяя схема возможностей: мониторинг, управление и защита.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1280" y2="420" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0c101b"/>
+      <stop offset="1" stop-color="#111d37"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="803" y1="55" x2="1200" y2="377" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#87a2ff"/>
+      <stop offset="1" stop-color="#4868db"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop stop-color="#4774f5" stop-opacity=".2"/>
+      <stop offset="1" stop-color="#4774f5" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0v32" fill="none" stroke="#7191d0" stroke-opacity=".09"/>
+    </pattern>
+  </defs>
+  <rect x="1" y="1" width="1278" height="418" rx="24" fill="url(#background)" stroke="#2b3b5b" stroke-width="2"/>
+  <rect x="1" y="1" width="1278" height="418" rx="24" fill="url(#grid)"/>
+  <ellipse cx="1040" cy="210" rx="345" ry="255" fill="url(#glow)"/>
+  <g font-family="Inter,Segoe UI,Arial,sans-serif">
+    <circle cx="65" cy="68" r="5" fill="#7d9aff"/>
+    <text x="83" y="73" font-size="13" letter-spacing="3.4" fill="#a2b4d8">PRIVATE CONTROL PLANE</text>
+    <text x="59" y="168" font-size="76" font-weight="750" letter-spacing="-3" fill="#f2f6ff">Server<tspan fill="#91aaff"> Deck</tspan></text>
+    <text x="64" y="222" font-size="27" font-weight="500" fill="#c6d3ed">Инфраструктура под контролем.</text>
+    <text x="64" y="259" font-size="19" fill="#8ea3c7">Серверы, сервисы и VPN — в одном интерфейсе.</text>
+    <g font-size="12" font-weight="600" letter-spacing=".8">
+      <rect x="64" y="308" width="68" height="34" rx="8" fill="#162440" stroke="#354e7b"/>
+      <text x="98" y="330" text-anchor="middle" fill="#a9bfff">SSH</text>
+      <rect x="142" y="308" width="78" height="34" rx="8" fill="#162440" stroke="#354e7b"/>
+      <text x="181" y="330" text-anchor="middle" fill="#a9bfff">AWG</text>
+      <rect x="230" y="308" width="120" height="34" rx="8" fill="#162440" stroke="#354e7b"/>
+      <text x="290" y="330" text-anchor="middle" fill="#a9bfff">MTProxyL</text>
+      <rect x="360" y="308" width="112" height="34" rx="8" fill="#162440" stroke="#354e7b"/>
+      <text x="416" y="330" text-anchor="middle" fill="#a9bfff">FAIL2BAN</text>
+      <rect x="482" y="308" width="120" height="34" rx="8" fill="#162440" stroke="#354e7b"/>
+      <text x="542" y="330" text-anchor="middle" fill="#a9bfff">TELEGRAM</text>
+    </g>
+    <g fill="none" stroke="#6585cf" stroke-width="2">
+      <path d="M875 118h-35v212h35"/>
+      <path d="M840 224h-70"/>
+      <circle cx="759" cy="224" r="11" fill="#15274a" stroke="#8aa5ff"/>
+      <path d="M755 224h8M759 220v8" stroke="#a4bbff"/>
+    </g>
+    <g>
+      <rect x="875" y="72" width="337" height="92" rx="15" fill="#142039" stroke="#3a507b"/>
+      <rect x="895" y="93" width="48" height="48" rx="12" fill="#21365b"/>
+      <path d="M905 117h7l4-10 6 22 4-12h8" fill="none" stroke="#a2baff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="962" y="112" font-size="17" font-weight="650" fill="#e2eaff">Наблюдать</text>
+      <text x="962" y="137" font-size="13" fill="#94a9ce">Здоровье · доступность · события</text>
+      <rect x="875" y="178" width="337" height="92" rx="15" fill="#18294a" stroke="url(#accent)"/>
+      <rect x="895" y="199" width="48" height="48" rx="12" fill="#2c4375"/>
+      <g fill="none" stroke="#bed0ff" stroke-width="2" stroke-linecap="round">
+        <path d="M906 212h26M906 223h26M906 234h26"/>
+        <circle cx="914" cy="212" r="3" fill="#2c4375"/>
+        <circle cx="926" cy="223" r="3" fill="#2c4375"/>
+        <circle cx="918" cy="234" r="3" fill="#2c4375"/>
+      </g>
+      <text x="962" y="218" font-size="17" font-weight="650" fill="#edf2ff">Управлять</text>
+      <text x="962" y="243" font-size="13" fill="#a2b7df">Панели · клиенты · обновления</text>
+      <rect x="875" y="284" width="337" height="92" rx="15" fill="#142039" stroke="#3a507b"/>
+      <rect x="895" y="305" width="48" height="48" rx="12" fill="#21365b"/>
+      <path d="m919 314 12 5v10c0 7-6 12-12 15-6-3-12-8-12-15v-10l12-5Z" fill="none" stroke="#a2baff" stroke-width="2" stroke-linejoin="round"/>
+      <path d="m913 328 4 4 8-9" fill="none" stroke="#a2baff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="962" y="324" font-size="17" font-weight="650" fill="#e2eaff">Защищать</text>
+      <text x="962" y="349" font-size="13" fill="#94a9ce">Fail2ban · резервные копии · вход</text>
+    </g>
+  </g>
+</svg>
