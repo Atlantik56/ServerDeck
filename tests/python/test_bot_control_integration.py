@@ -15,7 +15,7 @@ from control import Control
 
 class ControlIntegrationTests(unittest.TestCase):
     def test_embedded_remote_contains_restart_worker_and_dispatch(self):
-        source = pathlib.Path(__file__).parent
+        source = (pathlib.Path(__file__).resolve().parents[2] / 'backend')
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
             for name in ('control_remote.py', 'panel_tls.py', 'software_remote.py',

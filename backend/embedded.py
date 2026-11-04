@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from urllib.parse import parse_qs,urlsplit,unquote
 from html import escape
 import public_access
+from asset_paths import static_directory
 from panel_tls import pinned_https_connection
 
 HOP={'connection','keep-alive','proxy-authenticate','proxy-authorization','te','trailer','transfer-encoding','upgrade','content-length','set-cookie','x-frame-options','content-security-policy','access-control-allow-origin','access-control-allow-credentials','strict-transport-security'}
@@ -196,7 +197,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             relative=urlsplit(self.path).path[len(b.meta['base'].rstrip('/')):]
             if relative in ('/_deck/theme.js','/_deck/theme.css') and self.command in ('GET','HEAD'):
                 suffix='js' if relative.endswith('.js') else 'css'
-                data=(b.manager.root/'static'/('native-theme.'+suffix)).read_bytes()
+                data=(static_directory(b.manager.root)/('native-theme.'+suffix)).read_bytes()
                 self.send_response(200);self.send_header('Content-Type','text/javascript; charset=utf-8' if suffix=='js' else 'text/css; charset=utf-8');self.send_header('Cache-Control','no-store');self.send_header('X-Content-Type-Options','nosniff');self.send_header('Content-Length',str(len(data)));self.end_headers()
                 if self.command!='HEAD':self.wfile.write(data)
                 return

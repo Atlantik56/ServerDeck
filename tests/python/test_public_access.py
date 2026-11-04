@@ -40,7 +40,7 @@ class PublicTests(unittest.TestCase):
         status,body=self.request(Host=self.host,**{'X-Deck-Gateway':self.secret})
         self.assertNotIn(self.secret.encode(),body)
     def test_bridge_cookie_is_secure_and_gateway_secret_never_reaches_vps(self):
-        manager=EmbeddedManager(pathlib.Path(__file__).parent,lambda:None,None,8765)
+        manager=EmbeddedManager((pathlib.Path(__file__).resolve().parents[2] / 'backend'),lambda:None,None,8765)
         meta={'base':'/','entry':'/panel/','port':2053,'scheme':'http','cookies':{},'expiresAt':time.time()+300}
         b=Bridge(manager,{'id':'server-10','host':'192.0.2.1'},'lucx',meta,9)
         try:

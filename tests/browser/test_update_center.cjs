@@ -2,7 +2,7 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const out={innerHTML:''};
 const ctx=vm.createContext({console,URL,Date,window:{},document:{addEventListener(){}},$:(id)=>id==='#updatesDashboard'?out:null,esc:v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),state:{servers:[]},bytes:n=>n,filter:'updates'});
-vm.runInContext(fs.readFileSync(__dirname+'/static/control.js','utf8'),ctx);
+vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../../frontend/static/control.js'),'utf8'),ctx);
 const status=state=>({state,current:'1.2.3',latest:'v1.2.4',sourceUrl:'https://github.com/example/project/releases',message:'<script>fixture</script>'});
 const fixture={checkedAt:1000,upstream:{checkedAt:1000,lucx:{ok:true,releases:[{version:'v3.11.0-lucx.332'}]},telemt:{ok:false,releases:[]},mtproxyl:{ok:true,releases:[{version:'v1.7.17'}]}},servers:[{server:'one',name:'Demo <host>',host:'192.0.2.1',ok:true,versions:{lucx:'3.11.0-lucx.332',mtproxyl:'1.7.17',telemt:'unknown',os:'Ubuntu',kernel:'6.8',rebootRequired:false},updateStatus:{lucx:status('latest'),mtproxyl:status('update_available'),telemt:status('unknown')}},{server:'two',name:'Offline',host:'192.0.2.2',ok:false,error:'SSH unavailable'}],projects:[{name:'Manual app',sourceUrl:'javascript:alert(1)',bindings:{one:{version:'<svg/onload=alert(1)>',checkedAt:1000,updateStatus:status('ahead')}}}]};
 ctx.fixture=fixture;

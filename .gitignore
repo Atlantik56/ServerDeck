@@ -29,6 +29,12 @@
 *.pfx
 *.token
 *.pub
+# Development runs keep private state beside the backend modules.
+/backend/servers.json
+/backend/control-data/
+/backend/health.sqlite3*
+/backend/activity.jsonl
+/backend/*-results.json
 # Local build/test artifacts.
 __pycache__/
 *.py[cod]

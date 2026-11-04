@@ -15,11 +15,12 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-HERE = pathlib.Path(__file__).resolve().parent
+REPOSITORY = pathlib.Path(__file__).resolve().parents[2]
+HERE = REPOSITORY / 'installer'
 sys.path.insert(0, str(HERE))
 import render
 import deploy_linux
-spec = importlib.util.spec_from_file_location('deck_installer', HERE.parent / 'install.py')
+spec = importlib.util.spec_from_file_location('deck_installer', HERE / 'install.py')
 launcher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher)
 
@@ -189,10 +190,10 @@ class RenewalTests(unittest.TestCase):
 
 class PackageTests(unittest.TestCase):
     def fixture(self, root):
-        for name in ['server.py', 'web_auth.py', 'account_helper.py', 'static/index.html', 'pwa/login/index.html', 'installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py']:
+        for name in ['backend/server.py', 'backend/web_auth.py', 'backend/account_helper.py', 'backend/deployment_helper.py', 'frontend/static/index.html', 'frontend/pwa/login/index.html', 'installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py']:
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text('DEFAULTS=[]\n' if name == 'server.py' else '')
+            path.write_text('DEFAULTS=[]\n' if name == 'backend/server.py' else '')
 
     def test_allowlist_never_copies_state_or_keys(self):
         with tempfile.TemporaryDirectory() as name:
@@ -201,7 +202,7 @@ class PackageTests(unittest.TestCase):
             for filename in ['servers.json', 'telegram.token', 'health.sqlite3', 'private.pem', 'check_live.py', 'test_live.py']:
                 (root / filename).write_text('operator-private')
             paths = {str(p) for p in launcher.source_files(root)}
-            self.assertIn('server.py', paths)
+            self.assertIn('backend/server.py', paths)
             self.assertIn('installer/reset_bootstrap.py', paths)
             self.assertFalse(any(p in paths for p in ('servers.json', 'telegram.token', 'health.sqlite3', 'private.pem', 'check_live.py', 'test_live.py')))
 
@@ -209,7 +210,7 @@ class PackageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             root = pathlib.Path(name)
             self.fixture(root)
-            (root / 'server.py').write_text("DEFAULTS=[{'host':'operator.example.org'}]\n")
+            (root / 'backend/server.py').write_text("DEFAULTS=[{'host':'operator.example.org'}]\n")
             with self.assertRaises(ValueError):
                 launcher.source_files(root)
 
@@ -217,7 +218,7 @@ class PackageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as name:
             root = pathlib.Path(name)
             self.fixture(root)
-            (root / 'remote.py').symlink_to(root / 'server.py')
+            (root / 'backend/remote.py').symlink_to(root / 'backend/server.py')
             with self.assertRaises(ValueError):
                 launcher.source_files(root)
 

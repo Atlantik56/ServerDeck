@@ -2,7 +2,9 @@
 
 ## Что потребуется
 
-Для серверной части используйте отдельный Ubuntu 24.04 или Debian 12 с systemd и Python 3.10–3.12. Нужен доступ root либо пользователь с sudo. Текущая реализация проверки пароля использует модуль `crypt`; Python 3.13+ для сервера не поддерживается этой установкой.
+Рекомендуемые ресурсы, размещение и расчёт диска описаны в [VPS.md](VPS.md). Подробные действия в каждом разделе панели — в [FEATURES.md](FEATURES.md).
+
+Для серверной части используйте отдельный Ubuntu 24.04 или Debian 12 с systemd и Python 3.9–3.12. Нужен доступ root либо пользователь с sudo. Текущая реализация проверки пароля использует модуль `crypt`; Python 3.13+ для сервера не поддерживается этой установкой.
 
 На компьютере оператора для основного способа установки нужен OpenSSH Client; в Windows он доступен через «Параметры → Дополнительные компоненты». Python на этом компьютере не требуется: команда запускает bootstrap непосредственно на VPS. На Linux-хосте нужны Python 3.9–3.12, curl и доверенные CA-сертификаты. При отсутствии зависимостей bootstrap объясняет, что установить, и завершается.
 
@@ -27,18 +29,20 @@
 В терминале Windows, macOS или Linux выполните команду, заменив `VPS` своим адресом:
 
 ```sh
-ssh -t root@VPS "curl -fsSL https://raw.githubusercontent.com/Atlantik56/ServerDeck/main/install.sh | bash"
+ssh -t root@VPS "curl -fsSL https://raw.githubusercontent.com/Atlantik56/ServerDeck/main/scripts/install.sh | bash"
 ```
 
 Если вы уже вошли на поддерживаемый Linux VPS:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Atlantik56/ServerDeck/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Atlantik56/ServerDeck/main/scripts/install.sh | bash
 ```
 
 Для другого порта, SSH-пользователя или ключа добавьте соответствующие параметры `ssh -p ПОРТ -i ПУТЬ ПОЛЬЗОВАТЕЛЬ@VPS`. Сначала проверьте отпечаток хоста, как описано ниже. Bootstrap читает интерактивные вопросы из терминала; `ssh -t` нужен для его выделения.
 
-Можно сначала скачать репозиторий, изучить скрипты и запустить `python3 install.py` из его каталога. Это альтернативный мастер для локального Linux или удалённого SSH-развёртывания с Windows/macOS/Linux; для этого варианта на компьютере оператора нужен Python 3 и OpenSSH (`ssh` и `scp`). Он оставляет стандартный ввод свободным: запуск `curl ... | python3` для него не подходит.
+Корневой `install.sh` оставлен как совместимый переход к `scripts/install.sh`; для новых установок используйте команды выше.
+
+Можно сначала скачать репозиторий, изучить скрипты и запустить `python3 installer/install.py` из его каталога. Это альтернативный мастер для локального Linux или удалённого SSH-развёртывания с Windows/macOS/Linux; для этого варианта на компьютере оператора нужен Python 3 и OpenSSH (`ssh` и `scp`). Он оставляет стандартный ввод свободным: запуск `curl ... | python3` для него не подходит.
 
 Мастер запрашивает:
 
@@ -54,13 +58,13 @@ curl -fsSL https://raw.githubusercontent.com/Atlantik56/ServerDeck/main/install.
 Список точных параметров установленной версии:
 
 ```sh
-python3 install.py --help
+python3 installer/install.py --help
 ```
 
 Проверка плана без установки:
 
 ```sh
-python3 install.py --dry-run
+python3 installer/install.py --dry-run
 ```
 
 Сухой запуск проверяет и показывает конфигурацию установки; он не заменяет реальный выпуск сертификата или проверку доступности домена из интернета.
@@ -68,7 +72,7 @@ python3 install.py --dry-run
 Параметры Python-мастера можно передать явно:
 
 ```sh
-python3 install.py --mode ssh --host server.example.org --user root --port 22 --identity /путь/к/ключу --domain deck.example.org --email admin@example.org --dry-run
+python3 installer/install.py --mode ssh --host server.example.org --user root --port 22 --identity /путь/к/ключу --domain deck.example.org --email admin@example.org --dry-run
 ```
 
 `--yes` подтверждает показанный план без отдельного вопроса. Параметров `--admin` и `--password` нет: учётная запись создаётся владельцем в браузере. `--public-ip` задаёт IPv4 установки, `--https-port` — высокий порт для режима без домена. `--source /путь/к/распакованному/проекту` позволяет использовать изученную локальную копию исходников. Без него мастер использует соседние исходники, если они есть, либо загружает архив проекта с GitHub. Для воспроизводимой установки сначала скачайте нужный commit и укажите этот каталог через `--source`.
@@ -125,7 +129,7 @@ root = pathlib.Path('/var/lib/serverdeck')
 if root.is_symlink() or not root.is_dir():
     raise SystemExit('Проверьте каталог установленной панели')
 token = getpass.getpass('Токен собственного Telegram-бота: ')
-if not re.fullmatch(r'[0-9]{5,16}:[A-Za-z0-9_-]{20,100}', token):
+if not re.fullmatch(r'[0-9]{5,20}:[A-Za-z0-9_-]{30,80}', token):
     raise SystemExit('Неверный формат токена')
 fd, name = tempfile.mkstemp(prefix='.telegram-', dir=str(root))
 try:
@@ -151,10 +155,10 @@ PYTOKEN
 
 Создайте первую резервную копию и сохраните **ключ восстановления отдельно от архивов**. Без него зашифрованные копии непригодны для восстановления. Резервная копия конфигурации панели или хоста не является полным образом диска либо доказательством успешного восстановления.
 
-Локальное расшифрование:
+Локальное расшифрование на Linux/macOS либо в WSL с доступным `/usr/bin/openssl`:
 
 ```sh
-python3 recover_backup.py --backup /путь/backup.sdbackup --key /путь/server-deck-recovery.key --out /путь/новый-каталог
+python3 backend/recover_backup.py --backup /путь/backup.sdbackup --key /путь/server-deck-recovery.key --out /путь/новый-каталог
 ```
 
 Команда не подключается к VPS. Каталог результата должен быть новым; извлечённые данные содержат секреты. Перед восстановлением на рабочий сервер изучите план, версию панели и адрес назначения: восстановление может заменить настройки и прервать подключения.
@@ -180,3 +184,71 @@ printf '{"action":"inspect"}' | sudo python3 -I /usr/local/lib/server-deck/deplo
 ```
 
 Проверка состояния сама не снимает блокировку. Администратору нужно сопоставить идентификатор задачи с `server-deck-domain-<jobid>`, проверить Caddy, службы авторизации и панели, итоговый HTTPS-адрес и запись результата. Только после подтверждённого завершения или возврата можно вручную снять блокировку соответствующей задачи. Автоматического повторного применения нет.
+
+## Структура исходников и установленной панели
+
+В Git исходники разделены по назначению:
+
+| Папка | Содержимое |
+|---|---|
+| `backend/` | API и мониторинг Python, адаптеры SSH, управление задачами, утилита расшифрования |
+| `frontend/static/` | Интерфейс управления |
+| `frontend/pwa/` | Вход, первый владелец, PWA и публичные значки |
+| `installer/` | Интерактивный Python-мастер, установка Linux, шаблоны и recovery-утилиты |
+| `scripts/` | Bootstrap и запуск тестов |
+| `tests/python/`, `tests/browser/` | Автоматические проверки |
+| `docs/` | Руководства |
+
+Установщик преобразует эту структуру в прежние рабочие пути. В уже установленной панели остаются:
+
+| Путь на контроллере | Назначение |
+|---|---|
+| `/opt/server-deck` | Рабочие Python-модули, `static/`, реестр и данные управления |
+| `/opt/server-deck-web` | Публичная страница входа и PWA |
+| `/etc/server-deck` | Приватные переменные служб, настройки установки и выбора файла учётных записей |
+| `/usr/local/lib/server-deck` | Ограниченные административные помощники и recovery-утилиты |
+| `/var/lib/serverdeck/.ssh` | SSH-ключи сервисного пользователя |
+| `/var/lib/server-deck-auth` | Состояние авторизации и первичной настройки |
+| `/etc/caddy` | Caddy, учётные записи по выбранному пути и доступные ему TLS-файлы |
+
+Это не список файлов для публикации. Каталоги содержат приватные данные; точный состав зависит от способа установки. Реструктуризация репозитория не является миграцией действующей установки и не требует перемещать её файлы по новым Git-папкам.
+
+## Проверка исходников
+
+Команды выполняются из корня клонированного репозитория на Linux, macOS либо в Linux-окружении WSL:
+
+```sh
+python3 installer/install.py --help
+python3 scripts/test.py
+```
+
+Первый вызов показывает параметры мастера, второй запускает Python-тесты backend и установщика. Тесты используют временное состояние и подменённые внешние действия, не обновляют VPS и не выпускают реальные сертификаты. Полный набор содержит Unix-зависимости и не предназначен для native Windows Python. Это не ограничивает запуск SSH-мастера `installer/install.py` с Windows; для него при необходимости используйте `py -3 installer/install.py`.
+
+JS-проверки и браузерные сценарии можно включить в общий прогон:
+
+```sh
+python3 scripts/test.py --browser
+```
+
+Нужны Node.js, Playwright и доступный Chromium. Установите их в собственное окружение Node.js, затем укажите модуль через `PLAYWRIGHT_MODULE`, если он не доступен как `playwright`, и при необходимости путь браузера через `CHROME_BIN`. Пример для shell Linux/macOS/WSL:
+
+```sh
+PLAYWRIGHT_MODULE=playwright python3 scripts/test.py --browser
+```
+
+Отдельные JS-проверки рендера:
+
+```sh
+node tests/browser/test_project_catalog.cjs
+node tests/browser/test_project_catalog_poll.cjs
+node tests/browser/test_update_center.cjs
+```
+
+Браузерные сценарии входа:
+
+```sh
+PLAYWRIGHT_MODULE=playwright node tests/browser/test_first_run_account.cjs
+PLAYWRIGHT_MODULE=playwright node tests/browser/test_login_remember.cjs
+```
+
+Браузерные проверки работают с тестовыми страницами и не являются входом в действующую панель. Полная установка на новом VPS, реальный выпуск Certbot и VPN-трафик проверяются отдельно в выбранной среде.

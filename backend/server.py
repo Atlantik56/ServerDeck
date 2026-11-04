@@ -20,6 +20,7 @@ from deployment_settings import DeploymentSettings
 from bot_menu import ReadOnlyBotMenu
 from bot_actions import BotActions
 import public_access
+from asset_paths import static_directory
 
 ROOT = pathlib.Path(__file__).resolve().parent
 CONFIG = ROOT / 'servers.json'
@@ -299,9 +300,9 @@ class Handler(BaseHTTPRequestHandler):
         if not public_access.gateway_ok(self.headers) or self.headers.get('Host') not in public_access.hosts(self.server.server_port):
             return self.reply(403,{'error':'Host rejected'})
         if self.path in ('/', '/index.html'):
-            return self.reply(200,(ROOT/'static/index.html').read_bytes().replace(b'__TOKEN__',TOKEN.encode()),'text/html; charset=utf-8')
+            return self.reply(200,(static_directory(ROOT)/'index.html').read_bytes().replace(b'__TOKEN__',TOKEN.encode()),'text/html; charset=utf-8')
         if self.path in ('/app.js','/account.js','/account.css','/maintenance.js','/health.js','/rf.js','/control.js','/software.js','/software.css','/embedded.js','/embedded.css','/control.css','/style.css','/theme.css','/alerts.js','/alerts.css','/security.js','/security.css','/security-updates.js','/security-updates.css','/outage-diagnostics.js','/outage-diagnostics.css','/fail2ban.js','/fail2ban.css','/deployment-settings.js','/deployment-settings.css'):
-            return self.reply(200,(ROOT/'static'/self.path[1:]).read_bytes(),'text/javascript; charset=utf-8' if self.path.endswith('.js') else 'text/css; charset=utf-8')
+            return self.reply(200,(static_directory(ROOT)/self.path[1:]).read_bytes(),'text/javascript; charset=utf-8' if self.path.endswith('.js') else 'text/css; charset=utf-8')
         if not self.auth(): return self.reply(403,{'error':'Откройте панель заново'})
         if self.path=='/api/deployment':
             try:return self.reply(200,deployment_settings().snapshot())

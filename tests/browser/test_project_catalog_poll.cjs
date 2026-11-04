@@ -3,7 +3,7 @@ const assert=require('assert'),fs=require('fs'),vm=require('vm');
 let now=100000,timer=null,delay=0,requests=0,rejectRead=false,deferRead=null;
 const output={innerHTML:''};
 const context={window:{},console,Date:{now:()=>now},document:{hidden:false,addEventListener(){}},filter:'software',controlUpdates:null,esc:String,$:()=>output,renderJobs(){},clock:()=>'',api:async()=>{requests++;if(rejectRead)throw Error('offline');if(deferRead)await deferRead;return{projects:[{custom:true,id:'git-a',name:'A',ok:true,checking:true,sourceUrl:'https://github.com/a/b',releases:[],bindings:{}}]}},setTimeout:(callback,ms)=>{assert.strictEqual(timer,null,'one timer only');timer=callback;delay=ms;return 1},clearTimeout:()=>{timer=null}};
-vm.createContext(context);vm.runInContext(fs.readFileSync(__dirname+'/static/software.js','utf8'),context);
+vm.createContext(context);vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../../frontend/static/software.js'),'utf8'),context);
 vm.runInContext('softwareData={servers:[],components:[{custom:true,id:"git-a",name:"A",ok:true,checking:true,releases:[],bindings:{},sourceUrl:"https://github.com/a/b"}]};',context);
 const run=source=>vm.runInContext(source,context),fire=async()=>{const callback=timer;assert(callback);timer=null;now+=delay;await callback()};
 (async()=>{

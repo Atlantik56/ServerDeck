@@ -24,7 +24,7 @@ class EmbedTests(unittest.TestCase):
         self.up=ThreadingHTTPServer(('127.0.0.1',0),Upstream);self.up.daemon_threads=True;self.up.seen=[]
         threading.Thread(target=self.up.serve_forever,daemon=True).start()
         self.c=SimpleNamespace(lock=threading.RLock(),busy=set(),clients_cache={},create_backup=Mock())
-        self.m=EmbeddedManager(pathlib.Path(__file__).parent,lambda:self.c,None,8765)
+        self.m=EmbeddedManager((pathlib.Path(__file__).resolve().parents[2] / 'backend'),lambda:self.c,None,8765)
         meta={'base':'/private/','entry':'/private/panel/','port':1234,'scheme':'http','cookies':{'native':'server-secret'},'expiresAt':time.time()+3600}
         self.b=Bridge(self.m,{'id':'s','host':'192.0.2.1'},'lucx',meta,self.up.server_port)
     def tearDown(self):self.b.close();self.up.shutdown();self.up.server_close()

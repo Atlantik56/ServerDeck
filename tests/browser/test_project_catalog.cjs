@@ -3,7 +3,7 @@ const nodes=new Map(),requests=[];
 const get=id=>{if(!nodes.has(id))nodes.set(id,{innerHTML:'',value:'',textContent:'',disabled:false});return nodes.get(id)};
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const ctx={console,window:{},document:{hidden:false,addEventListener(){},querySelector(){return{click(){}}}},$:get,esc,clock:()=>'',renderJobs(){},ctrlError:e=>esc(e),api:async(path,body)=>{requests.push([path,body]);return{projects:[]}},setTimeout(){return1},clearTimeout(){},filter:'software',controlUpdates:null};
-vm.createContext(ctx);vm.runInContext(fs.readFileSync(__dirname+'/static/software.js','utf8'),ctx);
+vm.createContext(ctx);vm.runInContext(fs.readFileSync(require('node:path').join(__dirname,'../../frontend/static/software.js'),'utf8'),ctx);
 const fixture={servers:[{server:'one',name:'One',host:'192.0.2.1',ok:true,inventory:{supported:true,components:{},os:'Ubuntu',arch:'x86_64'}}],upstream:{},components:[{id:'git-one',custom:true,name:'<script>bad</script>',description:'<img src=x onerror=evil>',provider:'github',sourceUrl:'https://github.com/owner/project',checkedAt:1,ok:true,bindings:{one:{version:'v1.0.0'}},releases:[{version:'v1.1.0',url:'https://github.com/owner/project/releases/tag/v1.1.0'}]}]};
 vm.runInContext('softwareData='+JSON.stringify(fixture)+';softwareSelected="one";renderSoftware()',ctx);
 let html=get('#softwareDashboard').innerHTML;

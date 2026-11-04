@@ -1,7 +1,8 @@
 import importlib.util,json,pathlib,shlex,stat,subprocess,tempfile,unittest,sys
-sys.path.insert(0,str(pathlib.Path(__file__).resolve().parent))
+BACKEND=pathlib.Path(__file__).resolve().parents[2] / 'backend'
+sys.path.insert(0,str(BACKEND))
 
-spec=importlib.util.spec_from_file_location('deck',pathlib.Path(__file__).with_name('server.py'))
+spec=importlib.util.spec_from_file_location('deck',BACKEND / 'server.py')
 deck=importlib.util.module_from_spec(spec);spec.loader.exec_module(deck)
 
 class KeyTests(unittest.TestCase):

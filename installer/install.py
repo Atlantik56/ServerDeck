@@ -94,11 +94,11 @@ def config(args):
 
 def source_files(root):
     root = pathlib.Path(root)
-    required = ['server.py', 'web_auth.py', 'account_helper.py', 'static/index.html', 'pwa/login/index.html', 'installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py']
-    if any(not (root / p).is_file() or (root / p).is_symlink() for p in required):
-        raise ValueError('Исходники неполные; нужен чистый публичный пакет ServerDeck')
+    required = ['backend/server.py', 'backend/web_auth.py', 'backend/account_helper.py', 'backend/deployment_helper.py', 'frontend/static/index.html', 'frontend/pwa/login/index.html', 'installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py']
+    if any((root / name).is_symlink() for name in ('backend', 'frontend', 'frontend/static', 'frontend/pwa', 'installer')) or any(not (root / p).is_file() or (root / p).is_symlink() for p in required):
+        raise ValueError('Исходники неполные; укажите корень чистого пакета ServerDeck с backend и frontend')
     # Prevent accidental installation of an operator's private registry defaults.
-    tree = ast.parse((root / 'server.py').read_text(encoding='utf-8'))
+    tree = ast.parse((root / 'backend/server.py').read_text(encoding='utf-8'))
     defaults = [n.value for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'DEFAULTS' for t in n.targets)]
     if len(defaults) != 1 or not isinstance(defaults[0], (ast.List, ast.Tuple)) or defaults[0].elts:
         raise ValueError('Публичный пакет должен содержать DEFAULTS=[]; личные серверы переносить нельзя')
@@ -107,11 +107,13 @@ def source_files(root):
         rel = p.relative_to(root)
         if not p.is_file():
             continue
-        allowed = (len(rel.parts) == 1 and p.suffix == '.py' and not p.name.startswith(('test_', 'check_', 'prepare_')) and p.name != 'install.py') or (rel.parts[0] in ('static', 'pwa') and p.suffix in RUNTIME_SUFFIXES) or rel.as_posix() in ('installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py')
+        allowed = (len(rel.parts) == 2 and rel.parts[0] == 'backend' and p.suffix == '.py' and not p.name.startswith(('test_', 'check_', 'prepare_'))) or (len(rel.parts) >= 3 and rel.parts[0] == 'frontend' and rel.parts[1] in ('static', 'pwa') and p.suffix in RUNTIME_SUFFIXES - {'.py'}) or rel.as_posix() in ('installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py')
         if allowed:
-            if p.is_symlink() or p.stat().st_size > 8 * 1024 * 1024:
+            if any((root.joinpath(*rel.parts[:count])).is_symlink() for count in range(1, len(rel.parts) + 1)) or p.stat().st_size > 8 * 1024 * 1024:
                 raise ValueError('Неподдерживаемый файл пакета: ' + str(rel))
             selected.append(rel)
+    if not {pathlib.Path(p) for p in required}.issubset(selected):
+        raise ValueError('Публичный пакет неполон')
     return selected
 
 
@@ -136,7 +138,7 @@ def extract_archive(data, destination):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 with archive.extractfile(item) as source:
                     target.write_bytes(source.read())
-    roots = [p for p in destination.iterdir() if p.is_dir() and (p / 'server.py').is_file()]
+    roots = [p for p in destination.iterdir() if p.is_dir() and (p / 'backend/server.py').is_file()]
     if len(roots) != 1:
         raise ValueError('Не найден корень проекта в архиве')
     return roots[0]
@@ -145,8 +147,9 @@ def extract_archive(data, destination):
 def get_source(args, temp):
     if args.source:
         return pathlib.Path(args.source).resolve()
-    adjacent = pathlib.Path(__file__).resolve().parent
-    if (adjacent / 'server.py').is_file():
+    script = pathlib.Path(__file__).resolve()
+    adjacent = script.parent.parent
+    if script.parent.name == 'installer' and (adjacent / 'backend/server.py').is_file():
         return adjacent
     print('Загружаю публичные исходники: ' + REPOSITORY)
     request = urllib.request.Request(ARCHIVE, headers={'User-Agent': 'ServerDeck-Installer/1'})

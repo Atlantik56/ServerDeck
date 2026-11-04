@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 from monitor import HealthStore
 
 
-ROOT = pathlib.Path(__file__).resolve().parent
+ROOT = pathlib.Path(__file__).resolve().parents[2] / 'backend'
 CID = 'a' * 12
 
 

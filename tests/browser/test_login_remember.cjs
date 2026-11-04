@@ -13,10 +13,10 @@ const outside = 'https://outside.test';
 const cookieName = '__Host-deck_session';
 const token = crypto.randomBytes(32).toString('base64url');
 const password = 'fictional-test-password';
-const root = path.join(__dirname, 'pwa');
+const root = path.resolve(__dirname, '../../frontend/pwa');
 const options = {
   headless: true,
-  executablePath: process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  executablePath: process.env.CHROME_BIN || undefined,
   viewport: { width: 393, height: 780 }, isMobile: true, hasTouch: true,
 };
 const lifetime = 30 * 86400;

@@ -95,6 +95,19 @@ def free_https_port():
     raise ValueError('Не удалось подобрать свободный HTTPS-порт')
 
 
+def install_relative(relative):
+    """Map repository folders to the stable installed application layout."""
+    relative = pathlib.Path(relative)
+    parts = relative.parts
+    if relative.is_absolute() or '..' in parts or '\\' in relative.as_posix() or ':' in relative.as_posix():
+        raise ValueError('Небезопасный путь исходников')
+    if len(parts) == 2 and parts[0] == 'backend' and relative.suffix == '.py':
+        return pathlib.Path(parts[1])
+    if len(parts) >= 3 and parts[0] == 'frontend' and parts[1] in ('static', 'pwa'):
+        return pathlib.Path(*parts[1:])
+    raise ValueError('Неизвестный раздел исходников')
+
+
 def selected_files(source):
     allowed_suffixes = {'.py', '.js', '.css', '.html', '.webmanifest', '.png', '.svg'}
     paths = []
@@ -102,19 +115,20 @@ def selected_files(source):
         rel = path.relative_to(source)
         if not path.is_file():
             continue
-        allowed = (len(rel.parts) == 1 and path.suffix == '.py' and path.name not in ('install.py', 'prepare_public.py') and not path.name.startswith(('test_', 'check_'))) or (rel.parts[0] in ('static', 'pwa') and path.suffix in allowed_suffixes)
+        allowed = (len(rel.parts) == 2 and rel.parts[0] == 'backend' and path.suffix == '.py' and not path.name.startswith(('test_', 'check_', 'prepare_'))) or (len(rel.parts) >= 3 and rel.parts[0] == 'frontend' and rel.parts[1] in ('static', 'pwa') and path.suffix in allowed_suffixes - {'.py'})
         if allowed:
-            if path.is_symlink() or path.stat().st_size > 8 * 1024 * 1024:
+            if any((source.joinpath(*rel.parts[:count])).is_symlink() for count in range(1, len(rel.parts) + 1)) or path.stat().st_size > 8 * 1024 * 1024:
                 raise ValueError('Небезопасный файл исходников')
             paths.append(rel)
-    for rel in ('server.py', 'web_auth.py', 'account_helper.py', 'deployment_helper.py', 'static/index.html', 'pwa/login/index.html'):
+    for rel in ('backend/server.py', 'backend/web_auth.py', 'backend/account_helper.py', 'backend/deployment_helper.py', 'frontend/static/index.html', 'frontend/pwa/login/index.html'):
         if pathlib.Path(rel) not in paths:
             raise ValueError('Пакет неполон')
-    tree = ast.parse((source / 'server.py').read_text(encoding='utf-8'))
+    tree = ast.parse((source / 'backend/server.py').read_text(encoding='utf-8'))
     defaults = [n.value for n in tree.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'DEFAULTS' for t in n.targets)]
     if len(defaults) != 1 or not isinstance(defaults[0], (ast.List, ast.Tuple)) or defaults[0].elts:
         raise ValueError('Пакет содержит непустые DEFAULTS. Установка личных данных запрещена.')
     for rel in paths:
+        install_relative(rel)
         if rel.suffix == '.py':
             compile((source / rel).read_text(encoding='utf-8'), str(rel), 'exec')
     return paths
@@ -259,7 +273,7 @@ def install(source, data, paths):
     acme = pathlib.Path('/var/lib/server-deck-acme')
     acme.mkdir(mode=0o755)
     for rel in paths:
-        target = APP / rel
+        target = APP / install_relative(rel)
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         shutil.copyfile(source / rel, target)
         target.chmod(0o600)
@@ -271,14 +285,15 @@ def install(source, data, paths):
     put(APP / 'servers.json', '[]\n', uid=owner.pw_uid, gid=owner.pw_gid)
     public_paths = ['/install', '/install/', '/login', '/login/']
     for rel in paths:
-        if rel.parts[0] == 'pwa':
-            target = WEB.joinpath(*rel.parts[1:])
+        installed = install_relative(rel)
+        if installed.parts[0] == 'pwa':
+            target = WEB.joinpath(*installed.parts[1:])
             target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
             shutil.copyfile(source / rel, target)
             target.chmod(0o644)
-            public_paths.append('/' + '/'.join(rel.parts[1:]))
+            public_paths.append('/' + '/'.join(installed.parts[1:]))
     for name in ('web_auth.py', 'account_helper.py', 'deployment_helper.py'):
-        put(HELPERS / name, (source / name).read_text(encoding='utf-8'), mode=0o644 if name == 'web_auth.py' else 0o600)
+        put(HELPERS / name, (source / 'backend' / name).read_text(encoding='utf-8'), mode=0o644 if name == 'web_auth.py' else 0o600)
     for script in ('reset_bootstrap.py', 'reset_account.py'):
         put(HELPERS / script, (source / 'installer' / script).read_text(encoding='utf-8'), mode=0o600)
     put(HELPERS / 'deployment_render.py', (source / 'installer/render.py').read_text(encoding='utf-8'), mode=0o600)

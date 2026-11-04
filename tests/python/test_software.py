@@ -98,7 +98,7 @@ class ControlSoftwareTests(unittest.TestCase):
             self.c.worker(job['id'],plan)
         backup.assert_called_once_with(self.server,'host','before-install');self.assertEqual([x.args[1]['op'] for x in ssh.call_args_list],['versions']);self.assertEqual(job['state'],'failed')
     def test_combined_worker_is_self_contained(self):
-        root=pathlib.Path(__file__).parent
+        root=(pathlib.Path(__file__).resolve().parents[2] / 'backend')
         combined=(root/'control_remote.py').read_text().replace('from software_remote import SoftwareAdapter',(root/'software_remote.py').read_text())
         combined=combined.replace('from reboot_remote import RemoteReboot',(root/'reboot_remote.py').read_text())
         namespace={'__name__':'deck_test'};exec(compile(combined,'<remote>','exec'),namespace)

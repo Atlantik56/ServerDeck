@@ -4,9 +4,9 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const origin='https://192.0.2.10:34871', claim='c'.repeat(43), password='fixture-first-password';
-const root=path.join(__dirname,'pwa');
+const root=path.resolve(__dirname,'../../frontend/pwa');
 (async()=>{
- const browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_BIN||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
+ const browser=await chromium.launch({headless:true,executablePath:process.env.CHROME_BIN||undefined});
  try{
   for(const width of [1440,393,360]){
    const context=await browser.newContext({viewport:{width,height:900},isMobile:width<500,hasTouch:width<500});
