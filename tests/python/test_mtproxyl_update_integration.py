@@ -87,7 +87,7 @@ class ManagerUpdateIntegrationTests(unittest.TestCase):
         self.run.assert_not_called()
 
     def test_published_but_unreviewed_release_and_older_installation_are_refused(self):
-        for installed, target in [('1.3.2', 'v1.7.18'), ('неизвестно', 'v1.7.18'),
+        for installed, target in [('1.3.1', 'v1.7.18'), ('неизвестно', 'v1.7.18'),
                                   ('1.7.17', 'v1.7.19')]:
             with self.subTest(installed=installed, target=target):
                 self.versions.return_value = {'mtproxyl': installed}

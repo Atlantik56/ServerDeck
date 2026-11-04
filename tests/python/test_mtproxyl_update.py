@@ -85,7 +85,7 @@ class ManagerCodeUpdateTests(unittest.TestCase):
         return manager.ManagerCodeUpdate(root=self.root,state=self.state,hooks=values)
 
     def code_bytes(self):
-        return {str(path.relative_to(self.root)):path.read_bytes() for path in [self.root/'mtproxyl.sh',self.root/'version',*sorted((self.root/'lib').glob('*.sh'))]}
+        return {str(path.relative_to(self.root)):path.read_bytes() for path in [self.root/'mtproxyl.sh',self.root/'version',*sorted((self.root/'lib').glob('*.sh'))] if path.is_file()}
 
     def request(self):
         return {'kind':'update','component':'mtproxyl','version':'v1.7.18'}
@@ -138,11 +138,143 @@ class ManagerCodeUpdateTests(unittest.TestCase):
         self.assertEqual(self.installed_version()['mtproxyl'],'1.7.17')
 
     def test_unknown_old_manager_requires_migration_instead_of_running_update(self):
-        (self.root/'mtproxyl.sh').write_bytes(manager_main('1.3.2'))
+        (self.root/'mtproxyl.sh').write_bytes(manager_main('1.3.1'))
         adapter=self.adapter()
         with self.assertRaisesRegex(ValueError,'1.3.2|миграц|1.7.17'):
             adapter.plan(self.request())
-        self.assertEqual(self.installed_version()['mtproxyl'],'1.3.2')
+        self.assertEqual(self.installed_version()['mtproxyl'],'1.3.1')
+
+    def legacy(self, active=True):
+        (self.root/'mtproxyl.sh').write_bytes(manager_main('1.3.2'))
+        (self.root/'version').unlink()
+        source={name:hashlib.sha256(value).hexdigest() for name,value in self.code_bytes().items()}
+        source_patch=patch.object(manager,'SOURCE_HASHES_132',source)
+        source_patch.start();self.addCleanup(source_patch.stop)
+        self.runtime['docker']=[{'name':'/mtproxyl','image':'mtproxyl-telemt:3.5.16-reviewed','id':'engine','pid':123,'startedAt':'unchanged'}]
+        if active:
+            self.active_zapret()
+            with self.protected.open('a') as stream:stream.write('QNUM="200"\nLIMIT_MATCH=""\n')
+            with (self.root/'nft-rules.conf').open('a') as stream:
+                stream.write("ZAPRET2_INSTANCES='1'\nZAPRET2_QUEUE_LIMIT='0'\nZAPRET2_QNUM='200'\n")
+            for entry in self.runtime['nft']['nftables']:
+                for body in entry.values():
+                    body['table']='MTProtoL'
+                    for expr in body.get('expr',[]):
+                        if 'queue' in expr:expr['queue']['num']=200
+
+    def test_reviewed_legacy_update_preserves_protected_state_and_creates_metadata(self):
+        self.legacy();adapter=self.adapter();before=adapter._capture()
+        plan=adapter.plan(self.request())
+        self.assertEqual(plan['summary']['current'],'1.3.2')
+        result=adapter.apply(plan['request'])
+        self.assertTrue(result['verified']);self.assertEqual(self.installed_version()['mtproxyl'],'1.7.18')
+        self.assertEqual((self.root/'version').read_text(),'1.7.18\n')
+        after=adapter._capture()
+        self.assertEqual(before['runtime'],after['runtime'])
+        protected=dict(after['protected']);protected.pop(str(self.root/'.maint-stamp'))
+        self.assertEqual(before['protected'],protected)
+        self.assertEqual((self.root/'.maint-stamp').read_text(),'0 1.7.18\n')
+        self.assertTrue(result['networkMigrationDeferred'])
+
+    def test_legacy_ack_preserves_original_timestamp_and_backups_original_metadata(self):
+        self.legacy();stamp=self.root/'.maint-stamp';stamp.write_text('12345 1.3.2\n');stamp.chmod(0o640)
+        adapter=self.adapter();plan=adapter.plan(self.request());result=adapter.apply(plan['request'])
+        self.assertEqual(stamp.read_text(),'12345 1.7.18\n');self.assertEqual(stamp.stat().st_mode&0o777,0o640)
+        backup=pathlib.Path(result['backup'])
+        self.assertEqual((backup/'metadata/.maint-stamp').read_text(),'12345 1.3.2\n')
+        import json
+        self.assertTrue(json.loads((backup/'manifest.json').read_text())['networkMigrationDeferred'])
+
+    def test_legacy_ack_revision_tracks_metadata_changes_before_apply(self):
+        self.legacy();adapter=self.adapter();plan=adapter.plan(self.request());expected=self.code_bytes()
+        (self.root/'.maint-stamp').write_text('100 1.3.2\n')
+        with self.assertRaisesRegex(ValueError,'изменилось'):adapter.apply(plan['request'])
+        self.assertEqual(expected,self.code_bytes())
+        self.assertEqual((self.root/'.maint-stamp').read_text(),'100 1.3.2\n')
+
+    def test_legacy_ack_missing_metadata_rolls_back_if_main_swap_fails(self):
+        self.legacy();adapter=self.adapter();plan=adapter.plan(self.request());expected=self.code_bytes();replace=adapter._replace
+        def fail_once(source,destination,mode):
+            if destination.name=='mtproxyl.sh' and not getattr(fail_once,'failed',False):
+                fail_once.failed=True;raise OSError('simulated main failure after ACK')
+            return replace(source,destination,mode)
+        with patch.object(adapter,'_replace',side_effect=fail_once):
+            with self.assertRaisesRegex(RuntimeError,'исходный код восстановлен'):adapter.apply(plan['request'])
+        self.assertFalse((self.root/'.maint-stamp').exists());self.assertEqual(expected,self.code_bytes())
+
+    def test_legacy_ack_exact_original_metadata_rolls_back_if_main_swap_fails(self):
+        self.legacy();stamp=self.root/'.maint-stamp';stamp.write_text('987 1.3.2\n');stamp.chmod(0o640)
+        adapter=self.adapter();plan=adapter.plan(self.request());expected=self.code_bytes();replace=adapter._replace
+        def fail_once(source,destination,mode):
+            if destination.name=='mtproxyl.sh' and not getattr(fail_once,'failed',False):
+                fail_once.failed=True;raise OSError('simulated main failure after ACK')
+            return replace(source,destination,mode)
+        with patch.object(adapter,'_replace',side_effect=fail_once):
+            with self.assertRaisesRegex(RuntimeError,'исходный код восстановлен'):adapter.apply(plan['request'])
+        self.assertEqual(stamp.read_text(),'987 1.3.2\n');self.assertEqual(stamp.stat().st_mode&0o777,0o640)
+        self.assertEqual(expected,self.code_bytes())
+
+    def test_legacy_ack_write_that_renamed_before_error_is_also_rolled_back(self):
+        self.legacy();adapter=self.adapter();plan=adapter.plan(self.request());expected=self.code_bytes();replace=adapter._replace
+        def fail_after_rename_once(source,destination,mode):
+            value=replace(source,destination,mode)
+            if destination.name=='.maint-stamp' and not getattr(fail_after_rename_once,'failed',False):
+                fail_after_rename_once.failed=True;raise OSError('simulated fsync failure after metadata rename')
+            return value
+        with patch.object(adapter,'_replace',side_effect=fail_after_rename_once):
+            with self.assertRaisesRegex(RuntimeError,'исходный код восстановлен'):adapter.apply(plan['request'])
+        self.assertFalse((self.root/'.maint-stamp').exists());self.assertEqual(expected,self.code_bytes())
+
+    def test_legacy_unsafe_maintenance_metadata_is_refused_before_writes(self):
+        self.legacy();stamp=self.root/'.maint-stamp';stamp.write_text('unrecognized metadata\n')
+        with self.assertRaisesRegex(ValueError,'метаданные'):self.adapter().plan(self.request())
+
+    def test_legacy_engine_must_be_recognized_and_compatible_before_code_write(self):
+        self.legacy();adapter=self.adapter();expected=self.code_bytes()
+        for image in ('mtproxyl-telemt:3.4.25','unrecognized-engine:latest'):
+            self.runtime['docker'][0]['image']=image
+            with self.assertRaisesRegex(ValueError,'Telemt 3.5.13'):adapter.plan(self.request())
+            self.assertEqual(expected,self.code_bytes())
+
+    def test_legacy_non_docker_backend_is_not_silently_converted(self):
+        self.legacy();(self.root/'settings.conf').write_text("ENGINE_BACKEND='binary'\n")
+        with self.assertRaisesRegex(ValueError,'Docker'):self.adapter().plan(self.request())
+
+    def test_legacy_unknown_local_code_is_preserved(self):
+        self.legacy();(self.root/'lib/utils.sh').write_text('#!/bin/bash\n: # unreviewed local edit\n')
+        expected=self.code_bytes()
+        with self.assertRaisesRegex(ValueError,'Локальные изменения'):self.adapter().plan(self.request())
+        self.assertEqual(expected,self.code_bytes())
+
+    def test_legacy_active_zapret_requires_persistent_original_queue_semantics(self):
+        self.legacy();adapter=self.adapter();path=self.root/'nft-rules.conf';original=path.read_text()
+        for old,new in (("ZAPRET2_INSTANCES='1'","ZAPRET2_INSTANCES='auto'"),
+                        ("ZAPRET2_QUEUE_LIMIT='0'","ZAPRET2_QUEUE_LIMIT='64'"),
+                        ("ZAPRET2_QNUM='200'","ZAPRET2_QNUM='201'")):
+            with self.subTest(key=old):
+                path.write_text(original.replace(old,new))
+                with self.assertRaisesRegex(ValueError,'прежнюю очередь'):adapter.plan(self.request())
+        path.write_text(original)
+        self.assertIn('managerRevision',adapter.plan(self.request())['request'])
+
+    def test_legacy_start_script_missing_compat_metadata_cannot_defer_a_restart(self):
+        self.legacy();adapter=self.adapter();self.protected.write_text(self.protected.read_text().replace('LIMIT_MATCH=""\n',''))
+        with self.assertRaisesRegex(ValueError,'Стартовый скрипт'):adapter.plan(self.request())
+
+    def test_legacy_active_queue_range_is_not_accepted_as_original_single_queue(self):
+        self.legacy();adapter=self.adapter()
+        self.runtime['nft']['nftables'][2]['rule']['expr'][0]['queue']['num']={'range':[200,201]}
+        with self.assertRaisesRegex(ValueError,'Активные очереди'):adapter.plan(self.request())
+
+    def test_legacy_disabled_zapret_does_not_require_an_active_queue(self):
+        self.legacy(active=False)
+        self.assertIn('managerRevision',self.adapter().plan(self.request())['request'])
+
+    def test_legacy_compatibility_drift_is_checked_again_before_apply(self):
+        self.legacy();adapter=self.adapter();plan=adapter.plan(self.request());expected=self.code_bytes()
+        path=self.root/'nft-rules.conf';path.write_text(path.read_text().replace("ZAPRET2_QUEUE_LIMIT='0'","ZAPRET2_QUEUE_LIMIT='64'"))
+        with self.assertRaisesRegex(ValueError,'прежнюю очередь'):adapter.apply(plan['request'])
+        self.assertEqual(expected,self.code_bytes())
 
     def test_browser_cannot_choose_unreviewed_version(self):
         adapter=self.adapter()
