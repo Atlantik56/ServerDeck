@@ -1,0 +1,27 @@
+.pwa-settings{display:none;max-width:620px;margin:0 0 20px}.filter-settings .pwa-settings{display:block}
+.pwa-card{border:1px solid #354564;border-radius:14px;padding:22px;background:linear-gradient(130deg,#19243b,#111827);color:#dce6fb}
+.pwa-card-head{display:flex;gap:15px;align-items:center}.pwa-card-head img{width:60px;height:60px;flex-shrink:0;border-radius:13px}
+.pwa-card h2{font-size:18px;margin:0 0 6px;line-height:1.4}.pwa-card p{font-size:13px;line-height:1.7;color:#a8b8d5;margin:14px 0}
+.pwa-state{font-size:12px;color:#9cb1dc}.pwa-card-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.pwa-primary,.pwa-secondary{font:600 14px/1.5 system-ui,sans-serif;min-height:46px;display:inline-flex;justify-content:center;align-items:center;padding:11px 17px;border-radius:9px;text-decoration:none;cursor:pointer;touch-action:manipulation}
+.pwa-primary{background:#5976ee;color:#fff;border:1px solid #8297ff}.pwa-secondary{background:#111b2e;color:#bacbed;border:1px solid #3a4b69}
+.pwa-primary:disabled{opacity:.65;cursor:default}.pwa-primary:focus-visible,.pwa-secondary:focus-visible,.pwa-close:focus-visible{outline:3px solid #9cbbff;outline-offset:3px}
+.pwa-dialog{width:min(520px,calc(100% - 24px));max-height:calc(100dvh - 24px);overflow:auto;background:#131d30;color:#e4ebfc;border:1px solid #425477;border-radius:16px;padding:24px;box-sizing:border-box;overscroll-behavior:contain}
+.pwa-dialog::backdrop{background:#050812c9;backdrop-filter:blur(3px)}.pwa-dialog-heading{display:flex;align-items:flex-start;gap:15px;justify-content:space-between}
+.pwa-dialog h2{font:650 22px/1.35 system-ui,sans-serif;margin:0}.pwa-close{width:44px;height:44px;flex-shrink:0;border:1px solid #3c4d70;border-radius:10px;background:#21304b;color:#bdcdeb;font-size:27px;cursor:pointer}
+.pwa-dialog p,.pwa-steps{font:15px/1.75 system-ui,sans-serif;color:#b2c1de}.pwa-steps{padding-left:24px}.pwa-steps li{padding-left:5px;margin:12px 0}.pwa-steps strong{color:#e2eafa}
+.pwa-dialog .pwa-note{font-size:13px;color:#8fa5ce}.pwa-dialog .pwa-secondary{margin-top:8px}
+body.pwa-standalone .pwa-nav{display:none}
+@media(max-width:900px){body .pwa-card{padding:20px 16px}body .pwa-card-actions>*{flex:1 1 160px}body .pwa-dialog{padding:22px 18px}body .pwa-card h2{font-size:17px}}
+/* Public installation page contains only application information. */
+html:has(.pwa-landing){color-scheme:dark}
+body.pwa-landing{margin:0;min-height:100dvh;background:radial-gradient(ellipse at 50% 0,#1b2948 0,transparent 65%),#0c101b;color:#e6edfb;font:16px/1.65 system-ui,sans-serif;-webkit-text-size-adjust:100%}
+.pwa-landing *{box-sizing:border-box}.pwa-landing main{max-width:560px;margin:0 auto;padding:60px 24px calc(35px + env(safe-area-inset-bottom,0px))}
+.pwa-wordmark{color:#9eb3df;font-size:13px;letter-spacing:1px}.pwa-app-icon{width:104px;height:104px;display:block;border-radius:24px;margin:36px 0 24px;box-shadow:0 15px 60px #030a2099}
+.pwa-landing h1{font-size:40px;letter-spacing:-1px;line-height:1.1;margin:0 0 16px}.pwa-landing .pwa-intro{font-size:19px;color:#b4c3df;line-height:1.6;margin-bottom:26px}
+.pwa-landing .pwa-state{color:#8fa5cf;margin:14px 0 0;font-size:13px}.pwa-landing .pwa-card-actions>*{flex:1 1 180px}
+.pwa-install-guide{margin-top:32px;padding-top:25px;border-top:1px solid #293955}.pwa-install-guide h2{font-size:18px;margin:0 0 10px}.pwa-install-guide .pwa-note{font-size:14px;color:#9aaccd}
+.pwa-landing footer{margin-top:35px;font-size:12px;color:#788eB7}.pwa-landing a{overflow-wrap:anywhere}
+@media(max-width:600px){.pwa-landing main{padding:28px 20px calc(28px + env(safe-area-inset-bottom,0px))}.pwa-app-icon{margin:26px 0 22px}.pwa-landing h1{font-size:34px}}
+
+@media(min-width:901px){body aside#sidebar{height:100dvh;overflow-y:auto;display:flex;flex-direction:column}body aside#sidebar .nav{flex-shrink:0}body aside#sidebar .sidebar-bottom{position:static;margin-top:28px;padding-top:25px;flex-shrink:0}}

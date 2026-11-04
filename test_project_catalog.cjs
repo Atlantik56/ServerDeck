@@ -1,0 +1,14 @@
+const assert=require('assert'),fs=require('fs'),vm=require('vm');
+const nodes=new Map(),requests=[];
+const get=id=>{if(!nodes.has(id))nodes.set(id,{innerHTML:'',value:'',textContent:'',disabled:false});return nodes.get(id)};
+const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ctx={console,window:{},document:{hidden:false,addEventListener(){},querySelector(){return{click(){}}}},$:get,esc,clock:()=>'',renderJobs(){},ctrlError:e=>esc(e),api:async(path,body)=>{requests.push([path,body]);return{projects:[]}},setTimeout(){return1},clearTimeout(){},filter:'software',controlUpdates:null};
+vm.createContext(ctx);vm.runInContext(fs.readFileSync(__dirname+'/static/software.js','utf8'),ctx);
+const fixture={servers:[{server:'one',name:'One',host:'192.0.2.1',ok:true,inventory:{supported:true,components:{},os:'Ubuntu',arch:'x86_64'}}],upstream:{},components:[{id:'git-one',custom:true,name:'<script>bad</script>',description:'<img src=x onerror=evil>',provider:'github',sourceUrl:'https://github.com/owner/project',checkedAt:1,ok:true,bindings:{one:{version:'v1.0.0'}},releases:[{version:'v1.1.0',url:'https://github.com/owner/project/releases/tag/v1.1.0'}]}]};
+vm.runInContext('softwareData='+JSON.stringify(fixture)+';softwareSelected="one";renderSoftware()',ctx);
+let html=get('#softwareDashboard').innerHTML;
+assert(html.includes('Проект по ссылке Git'));assert(html.includes('Ваши проекты Git'));assert(html.includes('v1.1.0'));assert(html.includes('вручную'));assert(html.includes('не подтверждена автоматической'));assert(html.includes('&lt;script&gt;bad&lt;/script&gt;'));assert(!html.includes('<script>bad'));assert(!html.includes('<img src=x'));
+assert(html.includes('Рецепт установки не определён'));assert(!html.includes('data-software="recipe-project"'));assert.strictEqual(requests.length,0);
+fixture.components[0].recipeId='lucx';vm.runInContext('softwareData='+JSON.stringify(fixture)+';renderSoftware()',ctx);html=get('#softwareDashboard').innerHTML;assert(html.includes('data-software="recipe-project"'));assert.strictEqual(requests.length,0);
+fixture.servers=[];vm.runInContext('softwareData='+JSON.stringify(fixture)+';renderSoftware()',ctx);html=get('#softwareDashboard').innerHTML;assert(html.includes('Ваши проекты Git'));assert(html.includes('data-software="bind-project" data-component="git-one" disabled'));assert.strictEqual(requests.length,0);
+console.log('Project catalog render: 16 assertions passed');

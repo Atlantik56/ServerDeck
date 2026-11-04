@@ -1,0 +1,86 @@
+body[data-deck-design] .security-updates-banner{display:flex;align-items:center;gap:13px;padding:13px 16px;margin:0 0 23px;border:1px solid #334768;border-radius:9px;background:#142139;color:#becce5;min-width:0}
+body[data-deck-design] .security-update-banner-mark{width:32px;height:32px;flex-shrink:0;display:grid;place-items:center;border:1px solid #425b88;border-radius:8px;color:#9ab4f1;background:#203153}
+body[data-deck-design] .security-update-banner-copy{flex:1;min-width:0}
+body[data-deck-design] .security-update-cve{display:block;font:10px/1.6 var(--ops-mono,ui-monospace,monospace);letter-spacing:.7px;color:#96aad2}
+body[data-deck-design] .security-update-banner-copy strong{display:block;font-size:12px;line-height:1.6;font-weight:500;color:#cbd8f0;overflow-wrap:anywhere}
+body[data-deck-design] .security-update-banner-copy small{display:block;font-size:11px;line-height:1.65;color:#8fa5cb;overflow-wrap:anywhere}
+body[data-deck-design] .security-update-banner-actions{display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap}
+body[data-deck-design] .security-update-banner-actions .button{font-size:11px;min-height:36px}
+body[data-deck-design] .security-updates-banner.has-notice{border-color:#6e89d6;background:#1b2c50;box-shadow:inset 3px 0 #7e9dff}
+body[data-deck-design] .security-updates-banner.has-notice .security-update-banner-copy strong{font-size:14px;font-weight:600;color:#dce7ff}
+body[data-deck-design] .security-updates-banner.is-stale{border-color:#69553d}
+body[data-deck-design] .security-updates-card-view{display:none;margin-bottom:25px;scroll-margin-top:84px}
+body[data-deck-design].filter-updates #securityUpdatesCard{display:block}
+body[data-deck-design].native-expanded #securityUpdatesBanner{display:none}
+body[data-deck-design] .security-update-card{border:1px solid #3b5280;border-left:3px solid #6484ff;border-radius:12px;background:#121d32;overflow:hidden;padding:22px}
+body[data-deck-design] .security-update-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+body[data-deck-design] .security-update-card-head>div{min-width:0}
+body[data-deck-design] .security-update-card-head h2{font-size:20px;line-height:1.4;color:#dce7fc;margin:7px 0 10px}
+body[data-deck-design] .security-update-card-head p{font-size:12px;line-height:1.8;color:#9fb5d9;margin:0}
+body[data-deck-design] .security-update-state{display:inline-block;flex-shrink:0;font-size:11px;line-height:1.6;padding:4px 8px;border:1px solid #425574;border-radius:5px;background:#202e45;color:#aabdde;white-space:nowrap}
+body[data-deck-design] .security-update-state.available,body[data-deck-design] .security-update-state.published{border-color:#5974b0;background:#243b65;color:#bfd3ff}
+body[data-deck-design] .security-update-state.fixed{border-color:#3d6558;background:#193b31;color:#a3d8c1}
+body[data-deck-design] .security-update-state.warning{border-color:#705b3e;background:#372e24;color:#e0c495}
+body[data-deck-design] .security-update-toolbar{display:flex;align-items:center;gap:18px;flex-wrap:wrap;justify-content:space-between;padding:17px 0;border-bottom:1px solid #2d4264}
+body[data-deck-design] .security-update-source{display:inline-flex;align-items:center;min-height:36px;font-size:12px;color:#a7c1ff;text-decoration:none}
+body[data-deck-design] .security-update-source:hover{text-decoration:underline}
+body[data-deck-design] .security-update-checks{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:18px 0}
+body[data-deck-design] .security-update-checks>div{min-width:0}
+body[data-deck-design] .security-update-checks dt{font-size:11px;line-height:1.7;color:#8fa6ce}
+body[data-deck-design] .security-update-checks dd{font:11px/1.8 var(--ops-mono,ui-monospace,monospace);color:#b9cbea;margin:5px 0 0;overflow-wrap:anywhere}
+body[data-deck-design] .security-update-note,body[data-deck-design] .security-update-message{font-size:12px;line-height:1.8;color:#94acd1;margin:12px 0;overflow-wrap:anywhere}
+body[data-deck-design] .security-update-error{font-size:12px;line-height:1.8;color:#e6afb4;margin:12px 0;overflow-wrap:anywhere}
+body[data-deck-design] .security-update-overview{display:flex;gap:10px 22px;flex-wrap:wrap;border-block:1px solid #2b4164;padding:14px 0;margin:17px 0;font-size:12px;line-height:1.7;color:#9fb6dc}
+body[data-deck-design] .security-update-overview strong{font-family:var(--ops-mono,ui-monospace,monospace);color:#d1dffc;margin-left:5px}
+body[data-deck-design] .security-update-notices{display:grid;gap:10px;margin:17px 0}
+body[data-deck-design] .security-update-notice{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:15px;border:1px solid #4c649b;border-radius:8px;background:#1c2e52;min-width:0}
+body[data-deck-design] .security-update-notice>div{min-width:0}
+body[data-deck-design] .security-update-notice strong{font-size:13px;line-height:1.7;font-weight:550;color:#d2e0fc;overflow-wrap:anywhere}
+body[data-deck-design] .security-update-notice p{font-size:12px;line-height:1.8;color:#a9bfe6;margin:5px 0;overflow-wrap:anywhere}
+body[data-deck-design] .security-update-notice small{font-size:11px;color:#8fa9d5;line-height:1.7}
+body[data-deck-design] .security-update-notice.acknowledged{border-color:#334b72;background:#14233b}
+body[data-deck-design] .security-update-hosts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}
+body[data-deck-design] .security-update-host{min-width:0;border:1px solid #30476c;border-radius:9px;background:#101c31;padding:17px}
+body[data-deck-design] .security-update-host-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap}
+body[data-deck-design] .security-update-host-head>div{min-width:0}
+body[data-deck-design] .security-update-host h3{font-size:15px;line-height:1.5;color:#d3e0f9;margin:0 0 5px;overflow-wrap:anywhere}
+body[data-deck-design] .security-update-host code{font-size:11px;line-height:1.8;color:#94add6;overflow-wrap:anywhere}
+body[data-deck-design] .security-update-packages{display:grid;gap:11px;margin:17px 0}
+body[data-deck-design] .security-update-packages>div{min-width:0}
+body[data-deck-design] .security-update-packages dt{font-size:11px;line-height:1.7;color:#839dc8}
+body[data-deck-design] .security-update-packages dd{font:11px/1.8 var(--ops-mono,ui-monospace,monospace);color:#b9ccee;margin:3px 0 0;overflow-wrap:anywhere}
+body[data-deck-design] .security-update-host-facts{display:flex;flex-wrap:wrap;gap:6px 12px;border-top:1px solid #2c4262;padding-top:12px;font-size:11px;line-height:1.8;color:#91a9d0}
+body[data-deck-design] .security-update-host-facts .security-update-apt-ready{color:#b7cdff}
+body[data-deck-design] .security-update-host-time{display:block;color:#839ec8;font-size:11px;line-height:1.8;margin-top:14px}
+body[data-deck-design] .security-update-empty{font-size:13px;line-height:1.8;color:#91a8ce;grid-column:1/-1}
+@media(max-width:1150px){body[data-deck-design] .security-update-hosts{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:900px){
+ body[data-deck-design] .security-updates-banner{gap:10px;padding:13px 12px;flex-wrap:wrap;margin-bottom:21px}
+ body[data-deck-design] .security-update-banner-mark{align-self:flex-start;width:30px;height:30px}
+ body[data-deck-design] .security-update-banner-copy{flex:1 1 calc(100% - 45px)}
+ body[data-deck-design] .security-update-banner-copy strong{font-size:12px}
+ body[data-deck-design] .security-update-banner-actions{flex:1 1 100%;margin-left:40px;gap:8px}
+ body[data-deck-design] .security-update-banner-actions .button{flex:1;min-width:0;min-height:44px;font-size:12px}
+ body[data-deck-design] .security-update-card{padding:18px 14px;border-radius:10px}
+ body[data-deck-design] .security-update-card-head{flex-wrap:wrap;gap:12px}
+ body[data-deck-design] .security-update-card-head h2{font-size:20px}
+ body[data-deck-design] .security-update-card-head p{font-size:13px}
+ body[data-deck-design] .security-update-toolbar{gap:12px}
+ body[data-deck-design] .security-update-toolbar .button{flex:1 1 100%;min-height:44px;font-size:13px}
+ body[data-deck-design] .security-update-source{min-height:44px;font-size:13px}
+ body[data-deck-design] .security-update-checks{grid-template-columns:minmax(0,1fr);gap:13px}
+ body[data-deck-design] .security-update-checks dt,body[data-deck-design] .security-update-checks dd{font-size:12px}
+ body[data-deck-design] .security-update-note,body[data-deck-design] .security-update-message,body[data-deck-design] .security-update-error{font-size:13px}
+ body[data-deck-design] .security-update-notice{flex-wrap:wrap;padding:13px;gap:11px}
+ body[data-deck-design] .security-update-notice .button{min-height:44px;flex:1 1 100%;font-size:12px}
+ body[data-deck-design] .security-update-host{padding:15px 13px}
+ body[data-deck-design] .security-update-host h3{font-size:16px}
+ body[data-deck-design] .security-update-state{white-space:normal}
+ body[data-deck-design] .security-update-packages dt,body[data-deck-design] .security-update-packages dd,body[data-deck-design] .security-update-host-facts{font-size:12px}
+}
+@media(max-width:900px){
+ body[data-deck-design] .security-updates-banner:not(.has-notice){display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px}
+ body[data-deck-design] .security-updates-banner:not(.has-notice) .security-update-banner-mark{display:none}
+ body[data-deck-design] .security-updates-banner:not(.has-notice) .security-update-banner-actions{margin:0;flex-basis:auto}
+ body[data-deck-design] .security-updates-banner:not(.has-notice) .security-update-banner-actions .button{font-size:11px;padding:9px;min-height:44px}
+}

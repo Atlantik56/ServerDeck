@@ -1,0 +1,4 @@
+/* First paint and native form controls; component colours come from each app. */
+:root { color-scheme: dark; background-color: #12171d; }
+body { background-color: #12171d; }
+html, body { scrollbar-color: #3c4b65 #12171d; }
