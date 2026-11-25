@@ -266,8 +266,10 @@ def monitor_loop():
         except Exception as e:print('Monitor:',str(e),flush=True)
         MONITOR_STOP.wait(max(5,60-(time.monotonic()-start)))
 
-def event(server, unit, action, ok):
+def event(server, unit, action, ok, server_id=None):
     row = dict(time=time.time(), server=server, unit=unit, action=action, ok=ok)
+    if server_id is not None:
+        row['serverId'] = server_id
     with LOCK:
         HISTORY.insert(0,row); del HISTORY[80:]
     with (ROOT/'activity.jsonl').open('a') as f: f.write(json.dumps(row,ensure_ascii=False)+'\n')
@@ -309,7 +311,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403,{'error':'Host rejected'})
         if self.path in ('/', '/index.html'):
             return self.reply(200,(static_directory(ROOT)/'index.html').read_bytes().replace(b'__TOKEN__',TOKEN.encode()),'text/html; charset=utf-8')
-        if self.path in ('/app.js','/account.js','/account.css','/maintenance.js','/health.js','/rf.js','/control.js','/software.js','/software.css','/embedded.js','/embedded.css','/control.css','/style.css','/theme.css','/alerts.js','/alerts.css','/security.js','/security.css','/security-updates.js','/security-updates.css','/outage-diagnostics.js','/outage-diagnostics.css','/fail2ban.js','/fail2ban.css','/deployment-settings.js','/deployment-settings.css','/panel-updates.js','/panel-updates.css'):
+        if self.path in ('/app.js','/account.js','/account.css','/maintenance.js','/health.js','/rf.js','/control.js','/software.js','/software.css','/embedded.js','/embedded.css','/control.css','/style.css','/theme.css','/alerts.js','/alerts.css','/security.js','/security.css','/security-updates.js','/security-updates.css','/outage-diagnostics.js','/outage-diagnostics.css','/fail2ban.js','/fail2ban.css','/deployment-settings.js','/deployment-settings.css','/panel-updates.js','/panel-updates.css','/server-workspace.css'):
             return self.reply(200,(static_directory(ROOT)/self.path[1:]).read_bytes(),'text/javascript; charset=utf-8' if self.path.endswith('.js') else 'text/css; charset=utf-8')
         if not self.auth(): return self.reply(403,{'error':'Откройте панель заново'})
         path=urlparse(self.path)
@@ -342,16 +344,21 @@ class Handler(BaseHTTPRequestHandler):
             if hours not in ('1','24','168'):return self.reply(400,{'error':'Неверный период'})
             try:return self.reply(200,security_report(int(hours)))
             except ValueError as e:return self.reply(503,{'error':str(e)})
-        if urlparse(self.path).path.startswith('/api/control'):
+        if path.path.startswith('/api/control'):
             try:
-                path=urlparse(self.path).path
-                from urllib.parse import parse_qs
-                query=parse_qs(urlparse(self.path).query)
+                raw_query=path.query
+                path=path.path
+                query=parse_panel_query(raw_query)
                 if path=='/api/control':return self.reply(200,control().snapshot())
-                if path=='/api/control/clients':return self.reply(200,control().catalog(query.get('force')==['1']))
-                if path=='/api/control/updates':return self.reply(200,control().updates(query.get('force')==['1']))
+                scoped_reads={'/api/control/clients':'catalog','/api/control/updates':'updates','/api/control/software':'software'}
+                if path in scoped_reads:
+                    scope=parse_panel_query(raw_query,keep_blank_values=True).get('server')
+                    if scope is not None and (len(scope)!=1 or not scope[0]):
+                        raise ValueError('Укажите один сервер.')
+                    read=getattr(control(),scoped_reads[path])
+                    force=query.get('force')==['1']
+                    return self.reply(200,read(force,server_id=scope[0]) if scope else read(force))
                 if path=='/api/control/components':return self.reply(200,{'projects':control().projects.updates(background=True)})
-                if path=='/api/control/software':return self.reply(200,control().software(query.get('force')==['1']))
                 if path=='/api/control/download':
                     p=control().backup_file(query.get('id',[''])[0]);body=p.read_bytes();name='server-deck-'+p.name
                 elif path=='/api/control/recovery-key':
@@ -565,7 +572,7 @@ class Handler(BaseHTTPRequestHandler):
                 c.busy.add(s['id'])
             try:
                 result=ssh(s,{'action':action,'unit':unit})
-                if action!='logs': event(s['name'],unit,action,result.get('ok',False))
+                if action!='logs': event(s['name'],unit,action,result.get('ok',False),server_id=s['id'])
                 with LOCK: CACHE.pop(s['id'],None)
                 return self.reply(200,result)
             finally:

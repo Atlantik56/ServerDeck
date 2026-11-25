@@ -119,7 +119,22 @@ class Control:
         if not result.get('ok'):raise ValueError(result.get('error','Ошибка адаптера'))
         return result['data']
 
-    def catalog(self,force=False):
+    def inspect_servers(self, inspect, server_id):
+        if server_id is not None:
+            return [inspect(self.server(server_id))]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            return list(pool.map(inspect,self.servers()))
+
+    @staticmethod
+    def scoped_projects(projects, server_id):
+        if server_id is None:
+            return projects
+        return [
+            dict(project, bindings={sid: binding for sid, binding in project.get('bindings',{}).items() if sid==server_id})
+            for project in projects
+        ]
+
+    def catalog(self,force=False,*,server_id=None):
         def one(s):
             with self.lock:old=self.clients_cache.get(s['id'])
             if old and not force and time.time()-old['checkedAt']<30:return old
@@ -127,7 +142,7 @@ class Control:
             except Exception as e:row=dict(server=s['id'],name=s['name'],host=s['host'],ok=False,error=str(e),clients=[],panels=[],inbounds=[],checkedAt=time.time())
             with self.lock:self.clients_cache[s['id']]=row
             return row
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:rows=list(pool.map(one,self.servers()))
+        rows=self.inspect_servers(one,server_id)
         return {'servers':rows,'checkedAt':time.time()}
 
     def backups(self):
@@ -192,14 +207,15 @@ class Control:
         with self.lock:self.releases=result
         return result
 
-    def updates(self,force=False):
+    def updates(self,force=False,*,server_id=None):
         def one(s):
             try:return dict(server=s['id'],name=s['name'],host=s['host'],ok=True,versions=self.ssh(s,{'op':'versions'}))
             except Exception as e:return dict(server=s['id'],name=s['name'],host=s['host'],ok=False,error=str(e))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:rows=list(pool.map(one,self.servers()))
+        rows=self.inspect_servers(one,server_id)
         upstream=self.release_catalog(force);checked_at=time.time()
         rows=annotate_servers(rows,upstream,checked_at)
-        return {'servers':rows,'upstream':upstream,'checkedAt':checked_at,'summary':summarize(rows),'projects':self.projects.updates(force,background=True)}
+        projects=self.scoped_projects(self.projects.updates(force,background=True),server_id)
+        return {'servers':rows,'upstream':upstream,'checkedAt':checked_at,'summary':summarize(rows),'projects':projects}
 
     def plan(self,data):
         s=self.server(data.get('server'));kind=data.get('kind')
@@ -234,7 +250,7 @@ class Control:
         with self.lock:self.plans[pid]=plan
         return {k:v for k,v in plan.items() if k not in ('request','revision','used')}
 
-    def software(self,force=False):
+    def software(self,force=False,*,server_id=None):
         def one(s):
             with self.lock:old=self.software_cache.get(s['id'])
             if old and not force and time.time()-old['checkedAt']<60:return old
@@ -242,8 +258,8 @@ class Control:
             except Exception as e:row=dict(server=s['id'],name=s['name'],host=s['host'],ok=False,error=str(e),checkedAt=time.time())
             with self.lock:self.software_cache[s['id']]=row
             return row
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:rows=list(pool.map(one,self.servers()))
-        projects=self.projects.request_refresh(force)
+        rows=self.inspect_servers(one,server_id)
+        projects=self.scoped_projects(self.projects.request_refresh(force),server_id)
         return dict(components=COMPONENTS+projects,servers=rows,upstream=self.release_catalog(force),checkedAt=time.time())
 
     def add_component(self,data):

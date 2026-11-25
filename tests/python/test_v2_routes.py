@@ -39,6 +39,21 @@ class Routes(unittest.TestCase):
   self.assertEqual(self.request('/api/fail2ban?server=example')[0],200)
   self.managers['fail2ban_manager'].snapshot.assert_called_once_with('example')
   self.managers['fail2ban_manager'].apply.assert_not_called()
+ def test_control_inventory_requires_authenticated_unambiguous_server_scope(self):
+  for endpoint,method in (('clients','catalog'),('updates','updates'),('software','software')):
+   with self.subTest(endpoint=endpoint):
+    path='/api/control/'+endpoint
+    read=getattr(self.managers['control'],method)
+    read.return_value={'servers':[]}
+    self.assertEqual(self.request(path+'?server=one',extra={'X-Deck-Token':None})[0],403)
+    for query in ('?server=', '?server', '?server=one&server=two', '?server=one&server='):
+     self.assertEqual(self.request(path+query)[0],400)
+    read.assert_not_called()
+    self.assertEqual(self.request(path+'?server=one&force=1')[0],200)
+    read.assert_called_once_with(True,server_id='one')
+    read.reset_mock()
+    self.assertEqual(self.request(path+'?force=1')[0],200)
+    read.assert_called_once_with(True)
  def test_mutations_require_origin_token_gateway_and_host(self):
   paths=['/api/fail2ban/'+a for a in ('plan','apply','review')]+['/api/control/components/'+a for a in ('add','remove','bind')]+['/api/deployment/'+a for a in ('plan','apply','check')]
   for path in paths:

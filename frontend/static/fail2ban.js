@@ -6,27 +6,30 @@
  function selector(servers,sid){return `<label class="wide">Сервер<select id="f2bServer">${servers.map(s=>`<option value="${esc(s.id||s.server)}" ${(s.id||s.server)===sid?'selected':''}>${esc(s.name)} · ${esc(s.host)}</option>`).join('')}</select></label>`}
  async function open(sid){
   const generation=++requestGeneration;
+  const workspace=window.activeServerWorkspace?.();
   const servers=Array.isArray(state?.servers)?state.servers:[];
   sid=sid||document.querySelector('#securityServer')?.value||servers[0]?.id;
   if(!sid){modal('Fail2ban','<p>Сначала добавьте сервер в Server Deck.</p>');return}
-  modal('Настройка Fail2ban',`${selector(servers,sid)}<div class="loading"><div class="spinner"></div>Читаем действующую jail sshd…</div>`);
-  document.querySelector('#f2bServer').onchange=e=>open(e.target.value);
+  const picker=workspace?.id===sid?'':selector(servers,sid);
+  const bindPicker=()=>{const select=document.querySelector('#f2bServer');if(select)select.onchange=e=>open(e.target.value)};
+  modal('Настройка Fail2ban',`${picker}<div class="loading"><div class="spinner"></div>Читаем действующую jail sshd…</div>`);
+  bindPicker();
   try{
    const data=await api('/api/fail2ban?server='+encodeURIComponent(sid));
    if(generation!==requestGeneration||!document.querySelector('#modal')?.open)return;
    const target=`<div class="software-target"><strong>${esc(data.name)}</strong><span>${esc(data.host)}</span></div>`;
    if(!data.editable){
-    modal('Настройка Fail2ban',`${selector(servers,sid)}${target}<p class="form-note">${esc(data.message||'Редактирование недоступно')}</p>${!data.installed?'<button class="button primary" type="button" id="f2bInstall">Открыть каталог компонентов</button>':''}`);
-    document.querySelector('#f2bServer').onchange=e=>open(e.target.value);
+    modal('Настройка Fail2ban',`${picker}${target}<p class="form-note">${esc(data.message||'Редактирование недоступно')}</p>${!data.installed?'<button class="button primary" type="button" id="f2bInstall">Открыть каталог компонентов</button>':''}`);
+    bindPicker();
     if(document.querySelector('#f2bInstall'))document.querySelector('#f2bInstall').onclick=()=>openSoftware(sid);
     return;
    }
    const effective=data.effective,pending=data.pendingJobs||[];
-   modal('Настройка Fail2ban',`${selector(servers,sid)}${target}<p class="form-note">Активная jail <strong>sshd</strong> · порты ${data.sshPorts.map(esc).join(', ')} · ${data.jails.length} jail на сервере.</p>
+   modal('Настройка Fail2ban',`${picker}${target}<p class="form-note">Активная jail <strong>sshd</strong> · порты ${data.sshPorts.map(esc).join(', ')} · ${data.jails.length} jail на сервере.</p>
     ${pending.length?`<div class="f2b-pending"><strong>Есть операция с неподтверждённым результатом.</strong><p>Повторное применение заблокировано. Проверьте результат перед новым планом.</p>${pending.map(job=>`<button class="button secondary" data-f2b-review="${esc(job.job)}" data-f2b-host="${esc(data.host)}" data-f2b-name="${esc(data.name)}">Проверить операцию и снять блокировку…</button>`).join('')}</div>`:''}
     <form id="f2bForm"><div class="form-grid f2b-grid">${number('maxretry',effective.maxretry,3,100,'Неудачных входов до блокировки')}${number('findtime',effective.findtime,60,86400,'Окно подсчёта, секунд')}${number('bantime',effective.bantime,60,2592000,'Срок блокировки, секунд')}<label class="wide">Дополнительные исключения IP / CIDR<textarea name="ignoreip" rows="3" placeholder="Один IP или CIDR на строку" maxlength="5200"></textarea><small>Дополнительные доверенные адреса. Исключения уменьшают защиту для этих источников.</small></label></div>
     <details class="f2b-protected"><summary>Сохраняемые исключения · ${data.protectedIgnoreip.length}</summary><code>${data.protectedIgnoreip.map(esc).join('<br>')}</code><p>Действующие исключения и адрес подключения панели ${esc(data.controllerIp)} добавляются автоматически.</p></details><p class="form-note">Будут изменены только пороги jail sshd. Настройки SSH, другие jail и службы VPN сохраняются. Действующие списки блокировок не очищаются.</p><div id="f2bError" class="form-error" role="alert"></div><div class="modal-actions"><button type="button" class="button secondary" id="f2bClose">Закрыть</button><button class="button primary" id="f2bPreview" ${pending.length?'disabled':''}>Предпросмотр изменений</button></div></form>`);
-   document.querySelector('#f2bServer').onchange=e=>open(e.target.value);
+   bindPicker();
    document.querySelector('#f2bClose').onclick=()=>document.querySelector('#modal').close();
    document.querySelector('#f2bForm').onsubmit=async event=>{
     event.preventDefault();const form=event.target,button=form.querySelector('#f2bPreview');button.disabled=true;
@@ -65,7 +68,5 @@
   cancel.onclick=()=>dialog.close();
   form.onsubmit=async e=>{e.preventDefault();if(reviewing||reviewAccepted||!confirm.checked||!form.isConnected||!dialog.open)return;reviewing=true;button.disabled=true;confirm.disabled=true;cancel.disabled=true;try{const result=await api('/api/fail2ban/review',{job,confirmation:host});reviewAccepted=true;if(!form.isConnected||!dialog.open)return;modal('Fail2ban',`<p role="status">${esc(result.message)}</p>`)}catch(error){if(!form.isConnected||!dialog.open)return;errorBox.textContent=error.message;if(reviewAccepted)return;reviewing=false;confirm.checked=false;confirm.disabled=false;button.disabled=true;cancel.disabled=false}};
  });
- function mount(){const toolbar=document.querySelector('#securityToolbar');if(!toolbar||toolbar.querySelector('[data-fail2ban-server]'))return;const button=document.createElement('button');button.type='button';button.className='button secondary';button.dataset.fail2banServer='';button.textContent='Настроить Fail2ban';toolbar.appendChild(button)}
- const security=document.querySelector('#securityDashboard');if(security)new MutationObserver(mount).observe(security,{childList:true,subtree:true});mount();
  window.openFail2ban=open;
 })();

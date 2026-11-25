@@ -130,4 +130,58 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(job['state'],'reviewed');self.assertNotIn('one',self.c.busy)
         self.assertEqual(ssh.call_args.args[1]['op'],'job')
 
+    def test_scoped_client_catalog_only_probes_selected_host_and_reuses_fleet_cache(self):
+        other = dict(self.server, id='two', host='192.0.2.2', name='Two')
+        self.c.servers = lambda: [self.server, other]
+        with patch.object(self.c,'ssh',return_value={'clients':[], 'checkedAt':time.time()}) as ssh:
+            scoped = self.c.catalog(server_id='two')
+            self.assertEqual([row['server'] for row in scoped['servers']], ['two'])
+            ssh.assert_called_once_with(other, {'op':'catalog'})
+            ssh.reset_mock()
+
+            fleet = self.c.catalog()
+            self.assertEqual([row['server'] for row in fleet['servers']], ['one','two'])
+            ssh.assert_called_once_with(self.server, {'op':'catalog'})
+            ssh.reset_mock()
+
+            self.c.catalog(force=True, server_id='two')
+            ssh.assert_called_once_with(other, {'op':'catalog'})
+
+    def test_scoped_updates_and_software_keep_catalog_and_filter_bindings(self):
+        other = dict(self.server, id='two', host='192.0.2.2', name='Two')
+        self.c.servers = lambda: [self.server, other]
+        project = {'id':'example', 'custom':True, 'bindings':{'one':{}, 'two':{'version':'v0.1.0'}}}
+        upstream = {'checkedAt':time.time(), 'telemt':{'ok':True, 'releases':[{'version':'v1.0.0'}]}}
+        with patch.object(self.c,'ssh',return_value={'telemt':'v0.1.0'}) as ssh, \
+             patch.object(self.c,'release_catalog',return_value=upstream), \
+             patch.object(self.c.projects,'updates',return_value=[project]), \
+             patch.object(self.c.projects,'request_refresh',return_value=[project]):
+            updates = self.c.updates(server_id='two')
+            self.assertEqual([row['server'] for row in updates['servers']], ['two'])
+            self.assertEqual(updates['summary']['update_available'], 1)
+            self.assertEqual(updates['projects'][0]['bindings'], {'two':{'version':'v0.1.0'}})
+            ssh.assert_called_once_with(other, {'op':'versions'})
+            ssh.reset_mock()
+
+            software = self.c.software(server_id='two')
+            self.assertEqual([row['server'] for row in software['servers']], ['two'])
+            self.assertEqual(software['components'][-1]['bindings'], {'two':{'version':'v0.1.0'}})
+            self.assertEqual(software['upstream'], upstream)
+            ssh.assert_called_once_with(other, {'op':'software-inventory'})
+            self.assertIn('one', project['bindings'])
+            ssh.reset_mock()
+
+            fleet = self.c.software()
+            self.assertEqual([row['server'] for row in fleet['servers']], ['one','two'])
+            self.assertEqual(fleet['components'][-1]['bindings'], project['bindings'])
+            ssh.assert_called_once_with(self.server, {'op':'software-inventory'})
+
+    def test_unknown_scope_never_probes_or_refreshes(self):
+        with patch.object(self.c,'ssh') as ssh, patch.object(self.c,'release_catalog') as releases:
+            for read in (self.c.catalog, self.c.updates, self.c.software):
+                with self.subTest(read=read.__name__), self.assertRaisesRegex(ValueError, 'Сервер не найден'):
+                    read(force=True, server_id='missing')
+            ssh.assert_not_called()
+            releases.assert_not_called()
+
 if __name__=='__main__':unittest.main()

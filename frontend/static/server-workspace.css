@@ -1,0 +1,365 @@
+.server-directory,
+.server-workspace {
+  min-width: 0;
+  color: var(--ops-text, #e4eaf5);
+}
+
+.server-directory {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.server-directory > li {
+  min-width: 0;
+}
+
+.server-directory-row {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto 18px;
+  grid-template-areas: "icon identity status arrow";
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 70px;
+  padding: 12px 16px;
+  border: 1px solid var(--ops-line, #29344d);
+  border-radius: 10px;
+  background: var(--ops-surface, #131a2a);
+  color: inherit;
+  text-align: start;
+}
+
+.server-directory-row:is(:hover, :focus-visible) {
+  border-color: var(--ops-line-strong, #405175);
+  background: var(--ops-raised, #19243a);
+}
+
+.server-directory-row:focus-visible,
+.server-workspace-nav button:focus-visible {
+  outline-offset: -3px;
+}
+
+.server-directory-icon {
+  grid-area: icon;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid #34496a;
+  border-radius: 8px;
+  background: #1c2c4966;
+  color: #9db6f6;
+}
+
+.server-directory-identity {
+  grid-area: identity;
+  min-width: 0;
+}
+
+.server-directory-name,
+.server-workspace-identity h2 {
+  display: block;
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.server-directory-host,
+.server-workspace-identity .host {
+  display: block;
+  margin: 3px 0 0;
+  color: var(--ops-muted, #8fa1bd);
+  font: 12px/1.5 var(--ops-mono, monospace);
+  overflow-wrap: anywhere;
+}
+
+.server-directory-status,
+.server-workspace-status {
+  --server-status-color: var(--ops-muted, #8fa1bd);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  color: var(--server-status-color);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.server-directory-status {
+  grid-area: status;
+}
+
+:is(.server-directory-status, .server-workspace-status)::before {
+  content: "";
+  flex: 0 0 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+:is(.server-directory-status, .server-workspace-status):is(.state-active, [data-state="active"], [data-state="ok"]) {
+  --server-status-color: var(--ops-good, #7ad2ac);
+}
+
+:is(.server-directory-status, .server-workspace-status):is(.state-warning, [data-state="warning"], [data-state="warn"]) {
+  --server-status-color: var(--ops-warn, #e3bd7a);
+}
+
+:is(.server-directory-status, .server-workspace-status):is(.state-failed, [data-state="failed"], [data-state="down"]) {
+  --server-status-color: var(--ops-danger, #ec9a9c);
+}
+
+.server-directory-arrow {
+  grid-area: arrow;
+  justify-self: end;
+  color: var(--ops-muted, #8fa1bd);
+}
+
+.server-directory-empty {
+  padding: 24px 16px;
+  border: 1px dashed var(--ops-line-strong, #405175);
+  border-radius: 10px;
+  color: var(--ops-muted, #8fa1bd);
+}
+
+.server-workspace-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "back back" "identity status";
+  gap: 12px 16px;
+  align-items: center;
+  margin: 0 0 18px;
+}
+
+.server-workspace-back {
+  grid-area: back;
+  justify-self: start;
+}
+
+.server-workspace-identity {
+  grid-area: identity;
+  min-width: 0;
+}
+
+.server-workspace-identity h2 {
+  font-size: clamp(21px, 4vw, 28px);
+}
+
+.server-workspace-status {
+  grid-area: status;
+}
+
+#serverWorkspace {
+  display: none;
+}
+
+body.filter-server #serverWorkspace,
+body.filter-server.server-section-clients #clientsDashboard,
+body.filter-server.server-section-backups #backupsDashboard,
+body.filter-server.server-section-updates #updatesDashboard,
+body.filter-server.server-section-software #softwareDashboard,
+body.filter-server.server-section-history #activity,
+body.filter-server.server-section-native #nativeDashboard {
+  display: block;
+}
+
+body[data-deck-design].filter-server :is(#servers, .content > .heading, .content > .section-bar),
+body[data-deck-design].filter-updates #updatesDashboard,
+body[data-deck-design].filter-activity #taskHistory,
+body[data-deck-design][class*="filter-"]:not(.filter-all) #refresh {
+  display: none;
+}
+
+.server-workspace-meta {
+  grid-area: status;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.server-workspace-identity h1 {
+  margin: 0;
+  font-size: clamp(22px, 4vw, 32px);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.server-workspace-card-head,
+.server-workspace-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.server-workspace-card .server-workspace-card-head h2,
+.server-workspace-tools h2 {
+  margin: 0;
+}
+
+.server-workspace-tools h2 {
+  font-size: 17px;
+}
+
+#serverWorkspaceBody:not(.server-workspace-overview) > .server-workspace-card + .server-workspace-card {
+  margin-top: 12px;
+}
+
+#serverWorkspaceBody .server-meta,
+#serverWorkspaceBody .server-metrics,
+#serverWorkspaceBody .service-list {
+  margin-inline: 0;
+}
+
+body.filter-server .server-task-status:empty {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .server-workspace-meta {
+    justify-content: space-between;
+  }
+}
+
+.server-workspace-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  margin: 0 0 18px;
+  padding: 4px;
+  border: 1px solid var(--ops-line, #29344d);
+  border-radius: 10px;
+  background: var(--ops-inset, #101827);
+}
+
+.server-workspace-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ops-secondary, #b4c2d9);
+  font-size: 13px;
+  line-height: 1.3;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.server-workspace-nav button:hover {
+  background: var(--ops-raised, #19243a);
+}
+
+.server-workspace-nav button[aria-current]:not([aria-current="false"]) {
+  border-color: #465f99;
+  background: #283b64;
+  color: #e7eeff;
+  font-weight: 600;
+}
+
+.server-workspace-nav button .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.server-workspace-overview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: 14px;
+}
+
+.server-workspace-card {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--ops-line, #29344d);
+  border-radius: 10px;
+  background: var(--ops-surface, #131a2a);
+  overflow-wrap: anywhere;
+}
+
+.server-workspace-card :is(h2, h3) {
+  margin: 0 0 8px;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.server-workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 900px) {
+  #sidebar :is([data-filter="all"], [data-filter="health"], [data-filter="availability"]) {
+    display: none;
+  }
+}
+
+@media (max-width: 600px) {
+  .server-directory-row {
+    grid-template-columns: 34px minmax(0, 1fr) 17px;
+    grid-template-areas: "icon identity arrow" "icon status arrow";
+    gap: 4px 10px;
+    padding: 11px 12px;
+  }
+
+  .server-directory-icon {
+    width: 34px;
+    height: 36px;
+  }
+
+  .server-directory-name {
+    font-size: 15px;
+  }
+
+  .server-workspace-header {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "back" "identity" "status";
+    gap: 9px;
+    margin-bottom: 14px;
+  }
+
+  .server-workspace-nav {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-bottom: 14px;
+  }
+
+  .server-workspace-nav button {
+    padding: 6px 3px;
+    font-size: 12px;
+  }
+
+  .server-workspace-nav button .ui-icon {
+    display: none;
+  }
+
+  .server-workspace-actions > .button {
+    flex: 1 1 130px;
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 379px) {
+  .server-workspace-nav {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

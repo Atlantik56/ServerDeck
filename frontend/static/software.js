@@ -1,34 +1,73 @@
-let softwareData=null,softwareSelected='',softwareLoading=null;
+let softwareData=null,softwareSelected='',softwareScope='';
+const softwareRequests=new Map();
 const softwareTitles={lucx:'LucX / 3x-ui',mtproxyl:'MTProxyL','mtproxyl-panel':'Веб-панель MTProxyL',telemt:'Telemt',awg:'AmneziaWG',fail2ban:'Fail2ban'};
 const softwareVersions=component=>softwareData?.upstream[component==='awg'?'lucx':component]?.releases||[];
 const softwareVersion=value=>String(value||'').replace(/^mtproxyl-panel-v/,'').replace(/^v/,'');
 
+function softwareWorkspace(){
+ const workspace=window.activeServerWorkspace?.();
+ return workspace?.section==='software'?workspace:null;
+}
+function canRenderSoftware(scope){
+ return scope?softwareWorkspace()?.id===scope:filter==='software';
+}
+function showCatalogRecipe(id,inventory){
+ if(['awg','fail2ban'].includes(id))return true;
+ return id!=='telemt'&&!inventory?.components?.[id]?.installed;
+}
 async function loadSoftware(force=false){
- if(softwareLoading)return softwareLoading;
- softwareLoading=(async()=>{
-  const root=$('#softwareDashboard');
-  if(!softwareData)root.innerHTML='<div class="loading"><div class="spinner"></div>Проверяем установленные компоненты и релизы…<small>Сервисы продолжают работать</small></div>';
-  try{softwareData=await api('/api/control/software'+(force?'?force=1':''));renderSoftware();await loadControlStatus()}
-  catch(e){root.innerHTML=ctrlError(e)+ '<button class="button secondary" data-software="refresh">Повторить проверку</button>'}
-  finally{softwareLoading=null}
- })();return softwareLoading;
+ const scope=softwareWorkspace()?.id||'',root=$('#softwareDashboard');
+ if(softwareScope!==scope||!softwareData){
+  root.innerHTML='<div class="loading"><div class="spinner"></div>Проверяем компоненты и релизы…</div>';
+ }
+ if(softwareRequests.has(scope))return softwareRequests.get(scope);
+ const query=new URLSearchParams();
+ if(scope)query.set('server',scope);
+ if(force)query.set('force','1');
+ const request=(async()=>{
+  try{
+   const search=query.toString();
+   const data=await api('/api/control/software'+(search?'?'+search:''));
+   if(!canRenderSoftware(scope))return;
+   softwareData=data;
+   softwareScope=scope;
+   renderSoftware();
+   await loadControlStatus();
+  }catch(error){
+   if(canRenderSoftware(scope))root.innerHTML=ctrlError(error)+'<button class="button secondary" data-software="refresh">Повторить проверку</button>';
+  }finally{softwareRequests.delete(scope)}
+ })();
+ softwareRequests.set(scope,request);
+ return request;
 }
 window.softwareNavigate=async view=>{if(view==='software'){resetProjectCatalogProgress();await loadSoftware(false)}};
-function openSoftware(sid){softwareSelected=sid||softwareSelected;$('#modal').close();document.querySelector('[data-filter="software"]').click();if(softwareData)renderSoftware()}
+function openSoftware(sid){
+ $('#modal').close();
+ const target=sid||window.activeServerWorkspace?.()?.id;
+ if(target&&window.openServerWorkspace)return window.openServerWorkspace(target,'software');
+ softwareSelected=sid||softwareSelected;
+ document.querySelector('[data-filter="software"]')?.click();
+ if(softwareData&&!softwareScope)renderSoftware();
+}
 
 function renderSoftware(){
+ const workspace=softwareWorkspace();
+ if(!softwareData||softwareScope!==(workspace?.id||''))return;
  const root=$('#softwareDashboard'),servers=softwareData.servers;
- if(!servers.some(s=>s.server===softwareSelected))softwareSelected=servers[0]?.server||'';
+ if(workspace)softwareSelected=workspace.id;
+ else if(!servers.some(s=>s.server===softwareSelected))softwareSelected=servers[0]?.server||'';
  const selected=servers.find(s=>s.server===softwareSelected),inv=selected?.inventory;
- root.innerHTML=`<div class="software-toolbar"><label>Сервер<select id="softwareServer">${servers.map(s=>`<option value="${esc(s.server)}" ${s.server===softwareSelected?'selected':''}>${esc(s.name)} · ${esc(s.host)}</option>`).join('')}</select></label><button class="button secondary" data-software="refresh">↻ Проверить компоненты</button><button class="button primary" data-software="add-project">＋ Проект по ссылке Git</button><button class="button secondary" data-software="updates">Центр обновлений ↗</button></div>
- <div class="software-banner"><div><span class="software-eyebrow">КАТАЛОГ КОМПОНЕНТОВ</span><h2>Установка и обслуживание в одном месте</h2><p>Выберите компонент и проверьте план. Изменения начнутся после подтверждения сервера и резервного копирования.</p></div><span class="software-counter">${softwareData.components.length}<small>компонентов</small></span></div>
- ${selected&&!selected.ok?ctrlError(selected.error):''}
- ${inv?`<div class="software-host"><span class="live-dot"></span><strong>${esc(selected.name)}</strong><span>${esc(inv.os)} · ${esc(inv.arch)}</span><span>Проверено ${clock(selected.checkedAt)}</span></div>${!inv.supported?'<div class="control-error">Автоматические рецепты поддерживают Ubuntu/Debian с systemd на x86_64 и aarch64.</div>':''}<div class="software-grid">${softwareData.components.filter(c=>!c.custom).map(c=>softwareCard(c,selected)).join('')}</div>`:''}
- ${renderProjectCatalog(selected)}<div class="control-note software-note">Новые панели LucX и MTProxyL слушают только localhost и открываются через Server Deck. Установка не заменяет существующие панели. Занятый порт, изменение конфигурации или ошибка копирования остановят задачу.</div>
- <button class="button secondary" type="button" data-job-history="${esc(softwareSelected)}">История задач</button>`;
+ const recipes=softwareData.components.filter(c=>!c.custom&&(!workspace||showCatalogRecipe(c.id,inv)));
+ const selector=workspace?'':`<label>Сервер<select id="softwareServer">${servers.map(s=>`<option value="${esc(s.server)}" ${s.server===softwareSelected?'selected':''}>${esc(s.name)} · ${esc(s.host)}</option>`).join('')}</select></label>`;
+ root.innerHTML=`${workspace?'<h2>Каталог компонентов</h2>':''}<div class="software-toolbar">${selector}<button class="button secondary" data-software="refresh">Проверить компоненты</button><button class="button primary" data-software="add-project">Проект по ссылке Git</button>${workspace?'':'<button class="button secondary" data-software="updates">Центр обновлений ↗</button>'}</div>
+ ${workspace?'':`<div class="software-banner"><div><span class="software-eyebrow">КАТАЛОГ КОМПОНЕНТОВ</span><h2>Установка и обслуживание в одном месте</h2><p>Выберите компонент и проверьте план. Изменения начнутся после подтверждения сервера и резервного копирования.</p></div><span class="software-counter">${recipes.length}<small>компонентов</small></span></div>`}
+ ${selected&&!selected.ok?ctrlError(selected.error):workspace&&!selected?'<div class="control-error">Нет данных о компонентах этого сервера.</div>':''}
+ ${inv?`<div class="software-host"><span class="live-dot"></span>${workspace?'':`<strong>${esc(selected.name)}</strong>`}<span>${esc(inv.os)} · ${esc(inv.arch)}</span><span>Проверено ${clock(selected.checkedAt)}</span></div>${!inv.supported?'<div class="control-error">Автоматические рецепты поддерживают Ubuntu/Debian с systemd на x86_64 и aarch64.</div>':''}<div class="software-grid">${recipes.map(c=>softwareCard(c,selected,Boolean(workspace))).join('')}</div>`:''}
+ ${renderProjectCatalog(selected,Boolean(workspace))}<div class="control-note software-note">Новые панели LucX и MTProxyL слушают только localhost и открываются через Server Deck. Установка не заменяет существующие панели. Занятый порт, изменение конфигурации или ошибка копирования остановят задачу.</div>
+ ${workspace?'':`<button class="button secondary" type="button" data-job-history="${esc(softwareSelected)}">История задач</button>`}`;
  if($('#softwareServer'))$('#softwareServer').onchange=e=>{softwareSelected=e.target.value;renderSoftware()};scheduleProjectCatalogRefresh(softwareData.components.filter(c=>c.custom));
 }
-function softwareCard(c,s){
+function softwareCard(c,s,scoped=false){
  const inv=s.inventory,x=inv.components[c.id],entries=softwareVersions(c.id),present=x.installed,dockerAwg=c.id==='awg'&&x.containers?.length;
  const kind=present?'update':'install',version=c.id==='fail2ban'?x.candidate:entries[0]?.version;
  let blocked='';
@@ -43,7 +82,7 @@ function softwareCard(c,s){
  const installedText=dockerAwg?'Работает в Docker':present?'Установлен':'Не установлен';
  const detail=dockerAwg?x.containers.join(', '):x.version||'—';
  const target=c.id==='awg'?'Рецепт '+(version||'—'):(version||'—');
- const embed=present&&['lucx','mtproxyl-panel'].includes(c.id);
+ const embed=!scoped&&present&&['lucx','mtproxyl-panel'].includes(c.id);
  return `<article class="software-card"><div class="software-card-top"><span class="software-icon">${esc(c.icon)}</span><div><span class="software-category">${esc(c.category)}</span><h3>${esc(c.name)}</h3></div><span class="control-pill ${present||dockerAwg?'on':'off'}">${installedText}</span></div><p class="software-description">${esc(c.description)}</p><dl><div><dt>Установлено</dt><dd>${esc(detail)}</dd></div><div><dt>${c.id==='awg'?'Источник рецепта':'Доступный релиз'}</dt><dd>${esc(target)}</dd></div></dl>${blocked?`<p class="software-blocked">${esc(blocked)}</p>`:'<p class="software-ready">Проверка зависимостей и портов — в предпросмотре</p>'}<div class="software-card-actions"><button class="button ${present?'secondary':'primary'}" data-software="plan" data-component="${c.id}" data-kind="${c.id==='telemt'?'update':kind}" ${blocked?'disabled':''}>${present||c.id==='telemt'?'Обновить…':'Установить…'}</button>${embed?`<button class="button secondary" data-embed-panel="${c.id==='lucx'?'lucx':'mtproxyl'}" data-server="${esc(s.server)}">Открыть панель</button>`:''}${c.repo?`<a class="software-source" href="https://github.com/${esc(c.repo)}" target="_blank" rel="noopener noreferrer">Проект ↗</a>`:''}</div></article>`;
 }
 function softwareForm(component,kind){
@@ -62,18 +101,24 @@ document.addEventListener('click',async e=>{
  if(b.dataset.software==='remove-project'){projectRemoveForm(b.dataset.component);return}
  if(b.dataset.software==='recipe-project'){const c=softwareData.components.find(c=>c.id===b.dataset.component),s=softwareData.servers.find(s=>s.server===softwareSelected);if(c?.recipeId&&s?.ok)softwareForm(c.recipeId,c.recipeId==='telemt'||s.inventory.components[c.recipeId]?.installed?'update':'install');return}
  if(b.dataset.software==='plan'){softwareForm(b.dataset.component,b.dataset.kind);return}
- if(b.dataset.software==='updates'){window.selectUpdateServer?.(softwareSelected);document.querySelector('[data-filter="updates"]').click();return}
+ if(b.dataset.software==='updates'){
+  if(softwareWorkspace())window.openServerWorkspace?.(softwareSelected,'updates');
+  else{window.selectUpdateServer?.(softwareSelected);document.querySelector('[data-filter="updates"]')?.click()}
+  return;
+ }
  if(b.dataset.software==='retry-project-status'){resetProjectCatalogProgress();if(projectCatalogTimer){clearTimeout(projectCatalogTimer);projectCatalogTimer=null}await pollProjectCatalogStatus();return}
  if(b.dataset.software==='refresh'){resetProjectCatalogProgress();b.disabled=true;try{await loadSoftware(true)}finally{if(b.isConnected)b.disabled=false}}
 });
 
-function renderProjectCatalog(selected){
+function renderProjectCatalog(selected,scoped=false){
  const projects=softwareData.components.filter(c=>c.custom);
- return `<section class="project-catalog"><div class="section-bar"><div><h2>Ваши проекты Git</h2><p class="control-subtle">Добавьте ссылку GitHub или GitLab: описание и стабильные релизы появятся в каталоге.</p></div></div>${projectCatalogProgressHTML(projects)}${projects.length?`<div class="software-grid">${projects.map(c=>projectCard(c,selected)).join('')}</div>`:'<div class="control-box project-empty"><p>Пользовательских проектов пока нет.</p><button class="button secondary" data-software="add-project">＋ Добавить ссылку на проект</button></div>'}</section>`;
+ return `<section class="project-catalog"><div class="section-bar"><div><h2>Ваши проекты Git</h2>${scoped?'':'<p class="control-subtle">Добавьте ссылку GitHub или GitLab: описание и стабильные релизы появятся в каталоге.</p>'}</div></div>${projectCatalogProgressHTML(projects)}${projects.length?`<div class="software-grid">${projects.map(c=>projectCard(c,selected,scoped)).join('')}</div>`:`<div class="control-box project-empty"><p>Пользовательских проектов пока нет.</p>${scoped?'':'<button class="button secondary" data-software="add-project">＋ Добавить ссылку на проект</button>'}</div>`}</section>`;
 }
-function projectCard(c,s){
+function projectCard(c,s,scoped=false){
  const binding=s&&c.bindings?.[s.server],latest=c.releases?.[0],known=!!c.recipeId;
- return `<article class="software-card project-card"><div class="software-card-top"><span class="software-icon">GIT</span><div><span class="software-category">${esc(c.provider==='gitlab'?'GitLab':'GitHub')}</span><h3>${esc(c.name)}</h3></div><span class="control-pill ${c.ok&&!c.stale?'on':'off'}">${c.checking?'Проверяем…':c.ok&&!c.stale?'Проверен':'Нет свежих данных'}</span></div><p class="software-description">${esc(c.description||'Описание проекта не опубликовано.')}</p><dl><div><dt>Последний опубликованный релиз</dt><dd>${esc(latest?.version||'Не опубликован')}</dd></div><div><dt>На выбранном сервере · вручную</dt><dd>${esc(binding?.version||'Не указано')}</dd></div></dl>${c.error?`<p class="software-blocked">${esc(c.error)}</p>`:''}<p class="control-subtle">${known?'Для проекта доступен встроенный рецепт. Предпросмотр проверит ограничения выбранного сервера.':'Рецепт установки не определён. Добавление ссылки читает сведения проекта; код из репозитория не запускается.'} ${binding?'Указанная версия не подтверждена автоматической проверкой сервера.':''}</p><div class="software-card-actions">${known&&s?.ok?`<button class="button primary" data-software="recipe-project" data-component="${esc(c.id)}">Открыть рецепт…</button>`:''}<button class="button secondary" data-software="bind-project" data-component="${esc(c.id)}" ${s?'':'disabled'}>${binding?'Изменить версию на сервере':'Указать установленную версию'}</button><a class="software-source" href="${esc(c.sourceUrl)}" target="_blank" rel="noopener noreferrer">Проект ↗</a>${latest?`<a class="software-source" href="${esc(latest.url)}" target="_blank" rel="noopener noreferrer">Релиз ↗</a>`:''}<button class="button secondary" data-software="remove-project" data-component="${esc(c.id)}">Удалить запись…</button></div></article>`;
+ const recipe=known&&s?.ok&&(!scoped||showCatalogRecipe(c.recipeId,s.inventory));
+ const help=known?(recipe?'Предпросмотр рецепта проверит ограничения сервера.':'Версия установленного компонента доступна в разделе «Обновления».'):'Рецепт установки не определён. Добавление ссылки читает сведения проекта; код из репозитория не запускается.';
+ return `<article class="software-card project-card"><div class="software-card-top"><span class="software-icon">GIT</span><div><span class="software-category">${esc(c.provider==='gitlab'?'GitLab':'GitHub')}</span><h3>${esc(c.name)}</h3></div><span class="control-pill ${c.ok&&!c.stale?'on':'off'}">${c.checking?'Проверяем…':c.ok&&!c.stale?'Проверен':'Нет свежих данных'}</span></div><p class="software-description">${esc(c.description||'Описание проекта не опубликовано.')}</p><dl><div><dt>Последний опубликованный релиз</dt><dd>${esc(latest?.version||'Не опубликован')}</dd></div><div><dt>На выбранном сервере · вручную</dt><dd>${esc(binding?.version||'Не указано')}</dd></div></dl>${c.error?`<p class="software-blocked">${esc(c.error)}</p>`:''}<p class="control-subtle">${help} ${binding?'Указанная версия не подтверждена автоматической проверкой сервера.':''}</p><div class="software-card-actions">${recipe?`<button class="button primary" data-software="recipe-project" data-component="${esc(c.id)}">Открыть рецепт…</button>`:''}<button class="button secondary" data-software="bind-project" data-component="${esc(c.id)}" ${s?'':'disabled'}>${binding?'Изменить версию на сервере':'Указать установленную версию'}</button><a class="software-source" href="${esc(c.sourceUrl)}" target="_blank" rel="noopener noreferrer">Проект ↗</a>${latest?`<a class="software-source" href="${esc(latest.url)}" target="_blank" rel="noopener noreferrer">Релиз ↗</a>`:''}<button class="button secondary" data-software="remove-project" data-component="${esc(c.id)}">${scoped?'Удалить из общего каталога…':'Удалить запись…'}</button></div></article>`;
 }
 function projectForm(){
  modal('Добавить компонент из Git',`<form id="projectForm"><label>Ссылка на публичный проект<input name="url" type="url" required maxlength="512" placeholder="https://github.com/owner/project" autocomplete="off" spellcheck="false"></label><p class="form-note">Поддерживаются GitHub.com и GitLab.com. Достаточно ссылки на корень проекта: Server Deck прочитает описание и релизы. Ключи, токены и установочные команды не нужны.</p><p class="form-note">Для известных проектов откроется встроенный рецепт. Для остальных появятся источник, релизы и ручная привязка установленной версии к серверу.</p><div id="projectError" class="form-error"></div><div class="modal-actions"><button type="button" class="button secondary" id="projectCancel">Отмена</button><button class="button primary" id="projectSubmit">Добавить проект</button></div></form>`);
@@ -99,17 +144,22 @@ function projectCatalogProgressHTML(projects){
  if(projectCatalogPaused)return `<div class="control-note" role="status"><span>${projectCatalogReadError?'Не удалось прочитать результат проверки проектов.':'Проверка репозиториев занимает больше времени. Фоновая задача продолжает работать.'} Показаны сохранённые сведения; ожидание в браузере приостановлено.</span> <button class="button secondary" data-software="retry-project-status">Перечитать результат</button></div>`;
  return '<p class="control-subtle" role="status">Репозитории проверяются в фоне. Пока показаны сохранённые сведения; результат появится автоматически.</p>';
 }
-function redrawProjectCatalogStatus(){if(filter==='software'&&softwareData)renderSoftware();if(filter==='updates'&&controlUpdates)renderUpdates()}
+function projectCatalogView(){return window.activeServerWorkspace?.()?.section||filter}
+function redrawProjectCatalogStatus(){
+ const view=projectCatalogView();
+ if(view==='software'&&softwareData)renderSoftware();
+ if(view==='updates'&&controlUpdates)renderUpdates();
+}
 function scheduleProjectCatalogRefresh(projects){
  if(!projects.some(p=>p.checking)){resetProjectCatalogProgress();return}
- if(projectCatalogTimer||projectCatalogInFlight||projectCatalogPaused||document.hidden||!['software','updates'].includes(filter))return;
+ if(projectCatalogTimer||projectCatalogInFlight||projectCatalogPaused||document.hidden||!['software','updates'].includes(projectCatalogView()))return;
  if(!projectCatalogStartedAt)projectCatalogStartedAt=Date.now();
  if(Date.now()-projectCatalogStartedAt>=projectCatalogWaitLimit){projectCatalogPaused=true;redrawProjectCatalogStatus();return}
  const delay=projectCatalogPolls<4?2500:projectCatalogPolls<12?10000:20000;
- projectCatalogTimer=setTimeout(async()=>{projectCatalogTimer=null;if(!['software','updates'].includes(filter)||document.hidden){resetProjectCatalogProgress();return}if(Date.now()-projectCatalogStartedAt>=projectCatalogWaitLimit){projectCatalogPaused=true;redrawProjectCatalogStatus();return}await pollProjectCatalogStatus()},delay);
+ projectCatalogTimer=setTimeout(async()=>{projectCatalogTimer=null;if(!['software','updates'].includes(projectCatalogView())||document.hidden){resetProjectCatalogProgress();return}if(Date.now()-projectCatalogStartedAt>=projectCatalogWaitLimit){projectCatalogPaused=true;redrawProjectCatalogStatus();return}await pollProjectCatalogStatus()},delay);
 }
 async function pollProjectCatalogStatus(){
- if(projectCatalogInFlight||document.hidden||!['software','updates'].includes(filter))return;
+ if(projectCatalogInFlight||document.hidden||!['software','updates'].includes(projectCatalogView()))return;
  projectCatalogInFlight=true;projectCatalogPolls++;
  let rows=[];
  try{

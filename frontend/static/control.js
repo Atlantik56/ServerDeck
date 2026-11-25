@@ -1,5 +1,6 @@
-let controlClients=null,controlStatus={jobs:[],backups:[]},controlUpdates=null,clientRows=[],controlPoll=null;
-let updatesServerId='',historyServerId='';
+let controlStatus={jobs:[],backups:[]},controlUpdates=null,clientRows=[],controlPoll=null;
+let updatesServerId='',historyServerId='',controlUpdatesScope='';
+const clientCatalogs=new Map();
 const updateReleaseChoices=new Map();
 const panelTitle=p=>({lucx:'LucX / 3x-ui',mtproxyl:'MTProxyL',host:'Конфигурация хоста'}[p]||p);
 const fullDate=t=>t>0?new Date(t).toLocaleString('ru-RU'):'Без срока';
@@ -8,48 +9,116 @@ const ctrlLoading=()=>'<div class="loading"><div class="spinner"></div>Чита�
 const serverOptions=selected=>state.servers.map(s=>`<option value="${esc(s.id)}" ${s.id===selected?'selected':''}>${esc(s.name)} · ${esc(s.host)}</option>`).join('');
 const ctrlError=e=>`<div class="control-error">${esc(e.message||e)}</div>`;
 
+function controlWorkspaceId(section){
+ const workspace=window.activeServerWorkspace?.();
+ return workspace?.section===section?workspace.id:'';
+}
+
+function activeControlView(section,server){
+ return server?controlWorkspaceId(section)===server:filter===section;
+}
+
+function controlReadPath(resource,server,force){
+ const query=new URLSearchParams();
+ if(force)query.set('force','1');
+ if(server)query.set('server',server);
+ return '/api/control/'+resource+(force||server?'?'+query:'');
+}
+
+async function readClientCatalog(server,force=false){
+ const catalog=await api(controlReadPath('clients',server,force));
+ clientCatalogs.set(server,catalog);
+}
+
+function clientCatalogServers(server){
+ const rows=clientCatalogs.get(server)?.servers||[];
+ return server?rows.filter(row=>row.server===server):rows;
+}
+
 async function controlNavigate(view){
- if(!['clients','backups','updates'].includes(view))return;
+ if(!['clients','backups','updates','history'].includes(view))return;
+ const server=controlWorkspaceId(view);
+ if(view==='history'){
+  renderJobs();
+  try{await loadControlStatus()}catch(e){if(activeControlView(view,server))$('#taskHistory').innerHTML=ctrlError(e)}
+  return;
+ }
  const root=$('#'+view+'Dashboard');
  if(view==='clients')await loadControlClients(false);
- if(view==='backups'){if(!$('#backupServer'))root.innerHTML=ctrlLoading();try{if(!controlClients)controlClients=await api('/api/control/clients');await loadControlStatus();renderBackups()}catch(e){root.innerHTML=ctrlError(e)}}
- if(view==='updates'){window.resetProjectCatalogProgress?.();if(controlUpdates)renderUpdates();else root.innerHTML=ctrlLoading();try{controlUpdates=await api('/api/control/updates');renderUpdates();await loadControlStatus()}catch(e){root.innerHTML=ctrlError(e)}}
+ if(view==='backups'){
+  if(clientCatalogs.has(server))renderBackups();else root.innerHTML=ctrlLoading();
+  try{
+   if(!clientCatalogs.has(server))await readClientCatalog(server);
+   await loadControlStatus();
+   if(activeControlView(view,server))renderBackups();
+  }catch(e){if(activeControlView(view,server))root.innerHTML=ctrlError(e)}
+ }
+ if(view==='updates'){
+  if(controlUpdates&&controlUpdatesScope===server)renderUpdates();else root.innerHTML=ctrlLoading();
+  try{await loadControlUpdates(false)}catch(e){if(activeControlView(view,server))root.innerHTML=ctrlError(e)}
+ }
 }
 window.controlNavigate=controlNavigate;
 window.selectUpdateServer=serverId=>{updatesServerId=serverId};
 async function loadControlClients(force){
- if(!controlClients)$('#clientsDashboard').innerHTML=ctrlLoading();
- try{controlClients=await api('/api/control/clients'+(force?'?force=1':''));renderClients();await loadControlStatus()}catch(e){$('#clientsDashboard').innerHTML=ctrlError(e)}
+ const server=controlWorkspaceId('clients');
+ if(clientCatalogs.has(server))renderClients();else $('#clientsDashboard').innerHTML=ctrlLoading();
+ try{
+  await readClientCatalog(server,force);
+  if(activeControlView('clients',server))renderClients();
+  await loadControlStatus();
+ }catch(e){if(activeControlView('clients',server))$('#clientsDashboard').innerHTML=ctrlError(e)}
+}
+async function loadControlUpdates(force){
+ const server=controlWorkspaceId('updates');
+ window.resetProjectCatalogProgress?.();
+ const updates=await api(controlReadPath('updates',server,force));
+ if(activeControlView('updates',server)){
+  controlUpdates=updates;controlUpdatesScope=server;
+  renderUpdates();
+ }
+ await loadControlStatus();
 }
 function renderClients(){
- const root=$('#clientsDashboard'),search=root.querySelector('#clientSearch')?.value||'',server=root.querySelector('#clientServerFilter')?.value||'',panel=root.querySelector('#clientPanelFilter')?.value||'';
- clientRows=controlClients.servers.flatMap(s=>s.clients.map(c=>({...c,server:s.server,serverName:s.name,host:s.host})));
- const errors=controlClients.servers.flatMap(s=>!s.ok?[`${s.name}: ${s.error}`]:s.panels.filter(p=>!p.ok).map(p=>`${s.name} · ${panelTitle(p.panel)}: ${p.error}`));
- const panels=controlClients.servers.flatMap(s=>s.panels.filter(p=>p.ok).map(p=>`${s.name} · ${panelTitle(p.panel)}: ${p.count} клиентов`));
+ const root=$('#clientsDashboard'),scoped=controlWorkspaceId('clients');
+ const sameScope=root.dataset.serverScope===scoped;
+ const search=sameScope?root.querySelector('#clientSearch')?.value||'':'';
+ const server=sameScope?root.querySelector('#clientServerFilter')?.value||'':'';
+ const panel=sameScope?root.querySelector('#clientPanelFilter')?.value||'':'';
+ root.dataset.serverScope=scoped;
+ const catalog=clientCatalogServers(scoped);
+ clientRows=catalog.flatMap(s=>s.clients.map(c=>({...c,server:s.server,serverName:s.name,host:s.host})));
+ const errors=catalog.flatMap(s=>!s.ok?[scoped?s.error:`${s.name}: ${s.error}`]:s.panels.filter(p=>!p.ok).map(p=>`${scoped?'':s.name+' · '}${panelTitle(p.panel)}: ${p.error}`));
+ const panels=catalog.flatMap(s=>s.panels.filter(p=>p.ok).map(p=>`${scoped?'':s.name+' · '}${panelTitle(p.panel)}: ${p.count} клиентов`));
+ const serverFilter=scoped?'':`<select id="clientServerFilter" aria-label="Сервер клиентов"><option value="">Все серверы</option>${serverOptions(server)}</select>`;
  root.innerHTML=`
-  <div class="control-toolbar client-toolbar"><input id="clientSearch" placeholder="Найти клиента" aria-label="Поиск клиентов" value="${esc(search)}"><select id="clientServerFilter" aria-label="Сервер клиентов"><option value="">Все серверы</option>${serverOptions(server)}</select><select id="clientPanelFilter" aria-label="Панель клиентов"><option value="">Все панели</option><option value="lucx">LucX / 3x-ui</option><option value="mtproxyl">MTProxyL</option></select><button class="button secondary" data-ctrl="refresh-clients">↻ Обновить</button><button class="button primary" data-ctrl="add-client">＋ Новый клиент</button></div>
+  <div class="control-toolbar client-toolbar"><input id="clientSearch" placeholder="Найти клиента" aria-label="Поиск клиентов" value="${esc(search)}">${serverFilter}<select id="clientPanelFilter" aria-label="Панель клиентов"><option value="">Все панели</option><option value="lucx">LucX / 3x-ui</option><option value="mtproxyl">MTProxyL</option></select><button class="button secondary" data-ctrl="refresh-clients">${icon('refresh')}Обновить</button><button class="button primary" data-ctrl="add-client" ${scoped&&!panels.length?'disabled':''}>＋ Новый клиент</button></div>
   ${errors.length?`<div class="control-errors">${errors.map(error=>`<div class="control-error">${esc(error)}</div>`).join('')}</div>`:''}
-  <div class="client-results"><span>${clientRows.length} доступов · ${clientRows.filter(c=>c.enabled).length} включены</span><button class="button secondary" type="button" data-job-history>История задач</button></div>
-  <div class="control-box"><div class="control-table-wrap"><table class="control-table mobile-card-table"><thead><tr><th>КЛИЕНТ / ПАНЕЛЬ</th><th>СЕРВЕР / ПРОТОКОЛ</th><th>ДОСТУП</th><th>ТРАФИК / КВОТА</th><th>СРОК</th><th>ДЕЙСТВИЯ</th></tr></thead><tbody id="clientTableRows"></tbody></table></div></div><p class="control-subtle">Изменение клиента LucX распространяется на все его привязки в этой панели. При одинаковых именах на разных серверах доступы остаются отдельными. Ключи существующих клиентов при изменении лимитов сохраняются.</p>
+  <div class="client-results"><span>${clientRows.length} доступов · ${clientRows.filter(c=>c.enabled).length} включены</span>${scoped?'':'<button class="button secondary" type="button" data-job-history>История задач</button>'}</div>
+  <div class="control-box"><div class="control-table-wrap"><table class="control-table mobile-card-table"><thead><tr><th>КЛИЕНТ / ПАНЕЛЬ</th><th>${scoped?'ПРОТОКОЛ':'СЕРВЕР / ПРОТОКОЛ'}</th><th>ДОСТУП</th><th>ТРАФИК / КВОТА</th><th>СРОК</th><th>ДЕЙСТВИЯ</th></tr></thead><tbody id="clientTableRows"></tbody></table></div></div><p class="control-subtle">Изменение клиента LucX распространяется на все его привязки в этой панели. Ключи существующих клиентов при изменении лимитов сохраняются.</p>
   ${panels.length?`<details class="client-coverage"><summary>Подключённые панели · ${panels.length}</summary><ul>${panels.map(panel=>`<li>${esc(panel)}</li>`).join('')}</ul></details>`:''}`;
- $('#clientServerFilter').value=server;$('#clientPanelFilter').value=panel;
- for(const id of ['clientSearch','clientServerFilter','clientPanelFilter'])$('#'+id).addEventListener(id==='clientSearch'?'input':'change',renderClientRows);
+ if($('#clientServerFilter'))$('#clientServerFilter').value=server;
+ $('#clientPanelFilter').value=panel;
+ for(const id of ['clientSearch','clientServerFilter','clientPanelFilter'])$('#'+id)?.addEventListener(id==='clientSearch'?'input':'change',renderClientRows);
  renderClientRows();
 }
 function renderClientRows(){
- const q=$('#clientSearch').value.toLowerCase(),server=$('#clientServerFilter').value,panel=$('#clientPanelFilter').value;
- $('#clientTableRows').innerHTML=clientRows.map((c,i)=>({c,i})).filter(({c})=>(!q||[c.name,c.comment,c.host,c.serverName].join(' ').toLowerCase().includes(q))&&(!server||c.server===server)&&(!panel||c.panel===panel)).map(({c,i})=>`<tr><td><strong>${esc(c.name)}</strong><small>${panelTitle(c.panel)}${c.comment?' · '+esc(c.comment):''}</small></td><td>${esc(c.serverName)}<small>${esc(c.protocols.join(' · '))}</small></td><td><span class="control-pill ${c.enabled?'on':'off'}">${c.enabled?'Включён':'Выключен'}</span></td><td data-label="Трафик">${bytes(c.used)}<small>${c.quota?bytes(c.quota):'Без квоты'}</small></td><td data-label="Срок">${c.expires<0?'С первого подключения':esc(fullDate(c.expires))}</td><td><div class="control-actions"><button class="button secondary" data-ctrl="links" data-row="${i}">Конфиг</button><button class="button secondary" data-ctrl="edit-client" data-row="${i}">Изменить</button><button class="button secondary" data-ctrl="toggle-client" data-row="${i}">${c.enabled?'Отключить':'Включить'}</button><button class="small-btn stop" title="Удалить клиента" aria-label="Удалить ${esc(c.name)}" data-ctrl="delete-client" data-row="${i}">×</button></div></td></tr>`).join('')||'<tr><td class="mobile-full-cell" colspan="6">Клиентов по этому фильтру нет</td></tr>';
+ const scoped=controlWorkspaceId('clients'),q=$('#clientSearch').value.toLowerCase(),server=$('#clientServerFilter')?.value,panel=$('#clientPanelFilter').value;
+ $('#clientTableRows').innerHTML=clientRows.map((c,i)=>({c,i})).filter(({c})=>(!q||[c.name,c.comment,c.host,c.serverName].join(' ').toLowerCase().includes(q))&&(!server||c.server===server)&&(!panel||c.panel===panel)).map(({c,i})=>`<tr><td><strong>${esc(c.name)}</strong><small>${panelTitle(c.panel)}${c.comment?' · '+esc(c.comment):''}</small></td><td>${scoped?esc(c.protocols.join(' · ')):`${esc(c.serverName)}<small>${esc(c.protocols.join(' · '))}</small>`}</td><td><span class="control-pill ${c.enabled?'on':'off'}">${c.enabled?'Включён':'Выключен'}</span></td><td data-label="Трафик">${bytes(c.used)}<small>${c.quota?bytes(c.quota):'Без квоты'}</small></td><td data-label="Срок">${c.expires<0?'С первого подключения':esc(fullDate(c.expires))}</td><td><div class="control-actions"><button class="button secondary" data-ctrl="links" data-row="${i}">Конфиг</button><button class="button secondary" data-ctrl="edit-client" data-row="${i}">Изменить</button><button class="button secondary" data-ctrl="toggle-client" data-row="${i}">${c.enabled?'Отключить':'Включить'}</button><button class="small-btn stop" title="Удалить клиента" aria-label="Удалить ${esc(c.name)}" data-ctrl="delete-client" data-row="${i}">×</button></div></td></tr>`).join('')||'<tr><td class="mobile-full-cell" colspan="6">Клиентов по этому фильтру нет</td></tr>';
 }
 function localInputDate(ms){if(ms<=0)return '';const d=new Date(ms);return new Date(ms-d.getTimezoneOffset()*60000).toISOString().slice(0,16)}
 function clientForm(c=null){
- const selectedServer=$('#clientServerFilter')?.value,selectedPanel=$('#clientPanelFilter')?.value;
- const available=controlClients.servers.filter(s=>s.panels.some(p=>p.ok));
- const first=available.find(s=>s.server===selectedServer)||available[0];if(!first){toast('Нет доступных панелей');return}
- const editing=!!c,sid=c?.server||first.server;
- modal(editing?'Изменить · '+c.name:'Новый клиент',`<form id="controlClientForm" class="control-form"><div class="form-grid"><label class="wide">Сервер<select name="server" ${editing?'disabled':''}>${serverOptions(sid)}</select></label><label class="wide">Панель<select name="panel" ${editing?'disabled':''}><option value="lucx">LucX / 3x-ui</option><option value="mtproxyl">MTProxyL</option></select></label><label class="wide">Имя клиента<input name="name" required maxlength="128" value="${esc(c?.name||'')}" ${editing?'readonly':''} autocomplete="off"></label><label class="wide" id="clientInboundWrap" ${editing?'hidden':''}>Входящее подключение<select name="inbound"></select></label><label>Квота, ГиБ · 0 без лимита<input name="quota" type="number" min="0" step="any" value="${c?.quota?c.quota/1073741824:0}"></label><label>Максимум IP · 0 без лимита<input name="limitIp" type="number" min="0" step="1" value="${c?.limitIp||0}"></label><label class="wide">Действует до · пусто без срока<input name="expires" type="datetime-local" value="${localInputDate(c?.expires||0)}"></label><label class="wide" id="clientCommentWrap">Комментарий<input name="comment" maxlength="500" value="${esc(c?.comment||'')}"></label><label id="clientConnWrap">MTProxyL: максимум соединений<input name="maxConnections" type="number" min="0" step="1" value="${c?.maxConnections||0}"></label><label id="clientRateUpWrap">Скорость от клиента, Мбит/с<input name="rateUp" type="number" min="0" step="any" value="${(c?.rateUp||0)/1000000}"></label><label id="clientRateDownWrap">Скорость к клиенту, Мбит/с<input name="rateDown" type="number" min="0" step="any" value="${(c?.rateDown||0)/1000000}"></label><label class="wide control-check"><input name="enabled" type="checkbox" ${c?.enabled!==false?'checked':''}> Доступ включён</label></div><p class="control-form-note">${editing?'Приватные ключи, адреса, секреты и параметры протокола сохраняются.':'Для AWG ключи и свободный IPv4 генерируются на сервере. Создаётся один доступ на выбранном сервере.'}</p><p class="control-form-note">${c?.expires<0?'Текущий срок отсчитывается с первого подключения. Пустое поле сохранит этот режим.':''}</p><div id="clientFormError" class="form-error"></div><div class="modal-actions"><button class="button primary" id="previewClient">Предпросмотр изменения</button></div></form>`);
+ const scoped=controlWorkspaceId('clients'),selectedServer=$('#clientServerFilter')?.value,selectedPanel=$('#clientPanelFilter')?.value;
+ const available=clientCatalogServers(scoped).filter(s=>s.panels.some(p=>p.ok));
+ const first=available.find(s=>s.server===(scoped||c?.server||selectedServer))||(scoped||c?null:available[0]);
+ if(!first){toast('Нет доступных панелей');return}
+ const editing=!!c,sid=first.server;
+ const creationTargets=available.map(s=>`<option value="${esc(s.server)}" ${s.server===sid?'selected':''}>${esc(s.name)} · ${esc(s.host)}</option>`).join('');
+ modal(editing?'Изменить · '+c.name:'Новый клиент',`<form id="controlClientForm" class="control-form"><div class="form-grid"><label class="wide">Сервер<select name="server" ${editing||scoped?'disabled':''}>${creationTargets}</select></label><label class="wide">Панель<select name="panel" ${editing?'disabled':''}><option value="lucx">LucX / 3x-ui</option><option value="mtproxyl">MTProxyL</option></select></label><label class="wide">Имя клиента<input name="name" required maxlength="128" value="${esc(c?.name||'')}" ${editing?'readonly':''} autocomplete="off"></label><label class="wide" id="clientInboundWrap" ${editing?'hidden':''}>Входящее подключение<select name="inbound"></select></label><label>Квота, ГиБ · 0 без лимита<input name="quota" type="number" min="0" step="any" value="${c?.quota?c.quota/1073741824:0}"></label><label>Максимум IP · 0 без лимита<input name="limitIp" type="number" min="0" step="1" value="${c?.limitIp||0}"></label><label class="wide">Действует до · пусто без срока<input name="expires" type="datetime-local" value="${localInputDate(c?.expires||0)}"></label><label class="wide" id="clientCommentWrap">Комментарий<input name="comment" maxlength="500" value="${esc(c?.comment||'')}"></label><label id="clientConnWrap">MTProxyL: максимум соединений<input name="maxConnections" type="number" min="0" step="1" value="${c?.maxConnections||0}"></label><label id="clientRateUpWrap">Скорость от клиента, Мбит/с<input name="rateUp" type="number" min="0" step="any" value="${(c?.rateUp||0)/1000000}"></label><label id="clientRateDownWrap">Скорость к клиенту, Мбит/с<input name="rateDown" type="number" min="0" step="any" value="${(c?.rateDown||0)/1000000}"></label><label class="wide control-check"><input name="enabled" type="checkbox" ${c?.enabled!==false?'checked':''}> Доступ включён</label></div><p class="control-form-note">${editing?'Приватные ключи, адреса, секреты и параметры протокола сохраняются.':'Для AWG ключи и свободный IPv4 генерируются на сервере. Создаётся один доступ на выбранном сервере.'}</p><p class="control-form-note">${c?.expires<0?'Текущий срок отсчитывается с первого подключения. Пустое поле сохранит этот режим.':''}</p><div id="clientFormError" class="form-error"></div><div class="modal-actions"><button class="button primary" id="previewClient">Предпросмотр изменения</button></div></form>`);
  const form=$('#controlClientForm');form.elements.panel.value=c?.panel||selectedPanel||'lucx';
  const update=()=>{
-  const s=controlClients.servers.find(s=>s.server===form.elements.server.value),p=form.elements.panel.value;
+  const s=available.find(s=>s.server===form.elements.server.value);
+  if(!s)return;
   for(const option of form.elements.panel.options)option.disabled=!s.panels.some(x=>x.ok&&x.panel===option.value);
   if(form.elements.panel.selectedOptions[0]?.disabled)form.elements.panel.value=[...form.elements.panel.options].find(o=>!o.disabled)?.value||'';
   const current=form.elements.panel.value,mt=current==='mtproxyl';
@@ -61,7 +130,7 @@ function clientForm(c=null){
  form.onsubmit=async e=>{
   e.preventDefault();$('#previewClient').disabled=true;$('#clientFormError').textContent='';
   try{
-   const panel=c?.panel||form.elements.panel.value,server=c?.server||form.elements.server.value,fields={};
+   const panel=c?.panel||form.elements.panel.value,server=scoped||c?.server||form.elements.server.value,fields={};
    for(const k of ['quota','limitIp','expires',...(panel==='lucx'?['comment']:['maxConnections','rateUp','rateDown'])]){
     const value=form.elements[k].value;if(editing&&value===initial[k])continue;
     fields[k]=k==='comment'?value:k==='expires'?(value?new Date(value).getTime():0):Math.round(Number(value)*(k==='quota'?1073741824:k.startsWith('rate')?1000000:1));
@@ -92,23 +161,53 @@ function showControlPlan(plan){
 }
 async function loadControlStatus(){
  controlStatus=await api('/api/control');renderJobs();window.renderMaintenance?.();
- const running=controlStatus.jobs.some(j=>!['succeeded','failed','needs_review','reviewed'].includes(j.state));
- if(running&&!controlPoll)controlPoll=setInterval(async()=>{try{const prior=controlStatus;await loadControlStatus();if(filter==='software'&&prior.jobs.some(j=>!['succeeded','failed','needs_review','reviewed'].includes(j.state))&&!controlStatus.jobs.some(j=>!['succeeded','failed','needs_review','reviewed'].includes(j.state)))await loadSoftware(true);if(filter==='backups')renderBackups();if(filter==='clients'&&prior.jobs.some(j=>!['succeeded','failed','needs_review','reviewed'].includes(j.state))&&!controlStatus.jobs.some(j=>!['succeeded','failed','needs_review','reviewed'].includes(j.state)))await loadControlClients(true)}catch(e){toast(e.message)}},3500);
+ const running=hasRunningControlJob(controlStatus);
+ if(running&&!controlPoll)controlPoll=setInterval(async()=>{
+  try{
+   const prior=controlStatus;
+   await loadControlStatus();
+   const workspace=window.activeServerWorkspace?.(),view=workspace?.section||filter,server=workspace?.id||'';
+   const finished=hasRunningControlJob(prior,server)&&!hasRunningControlJob(controlStatus,server);
+   if(view==='software'&&finished)await loadSoftware(true);
+   if(view==='backups'&&clientCatalogs.has(server))renderBackups();
+   if(view==='clients'&&finished)await loadControlClients(true);
+  }catch(e){toast(e.message)}
+ },3500);
  if(!running&&controlPoll){clearInterval(controlPoll);controlPoll=null}
+}
+function hasRunningControlJob(snapshot,server=''){
+ return snapshot.jobs.some(j=>(!server||j.server===server)&&!['succeeded','failed','needs_review','reviewed'].includes(j.state));
 }
 function renderJobs(){
  const root=$('#taskHistory');if(!root)return;
- const jobs=historyServerId?controlStatus.jobs.filter(j=>j.server===historyServerId):controlStatus.jobs;
+ const scoped=controlWorkspaceId('history'),server=scoped||historyServerId;
+ const jobs=server?controlStatus.jobs.filter(j=>j.server===server):controlStatus.jobs;
  const opened=new Set([...root.querySelectorAll('[data-job-log][open]')].map(log=>log.dataset.jobLog));
- root.innerHTML=`<section class="control-jobs"><div class="section-bar"><h2>Задачи и результаты</h2></div>
-  <div class="control-toolbar"><label class="control-server-filter">Сервер<select id="historyServer" aria-label="Сервер для задач"><option value="">Все серверы</option>${serverOptions(historyServerId)}</select></label></div>
-  <div class="control-box">${jobs.length?jobs.map(j=>`<div class="control-job"><div><strong>${esc(j.title)}</strong><small>${esc(j.host)} · ${fullDate(j.createdAt*1000)}</small>${j.error?`<p class="warning">${esc(j.error)}</p>`:''}${j.message||j.result?.message?`<p>${esc(j.message||j.result.message)}</p>`:''}${j.kind==='reboot'||j.component==='os-index'?'':`<p>Копий перед действием: ${j.backups?.length||0}</p>`}${j.log?`<details data-job-log="${esc(j.id)}" ${opened.has(j.id)?'open':''}><summary class="control-subtle">Журнал задачи</summary><pre class="control-preview">${esc(j.log)}</pre></details>`:''}</div><div class="control-job-state"><span class="control-pill ${esc(j.state)}">${esc(jobNames[j.state]||j.state)}</span>${j.remoteSubmitted&&j.state==='needs_review'?`<button class="button secondary" data-ctrl="recheck-job" data-job="${j.id}" data-server="${esc(j.server)}">Перечитать статус</button><button class="button secondary" data-ctrl="ack-job" data-job="${j.id}" data-host="${esc(j.host)}">Снять блокировку…</button>`:''}</div></div>`).join(''):'<div class="empty">Задач пока нет</div>'}</div></section>`;
+ const serverFilter=scoped?'':`<div class="control-toolbar"><label class="control-server-filter">Сервер<select id="historyServer" aria-label="Сервер для задач"><option value="">Все серверы</option>${serverOptions(historyServerId)}</select></label></div>`;
+ root.innerHTML=`<section class="control-jobs">${scoped?'':'<div class="section-bar"><h2>Задачи и результаты</h2></div>'}
+  ${serverFilter}
+  <div class="control-box">${jobs.length?jobs.map(j=>`<div class="control-job"><div><strong>${esc(j.title)}</strong><small>${scoped?'':esc(j.host)+' · '}${fullDate(j.createdAt*1000)}</small>${j.error?`<p class="warning">${esc(j.error)}</p>`:''}${j.message||j.result?.message?`<p>${esc(j.message||j.result.message)}</p>`:''}${j.kind==='reboot'||j.component==='os-index'?'':`<p>Копий перед действием: ${j.backups?.length||0}</p>`}${j.log?`<details data-job-log="${esc(j.id)}" ${opened.has(j.id)?'open':''}><summary class="control-subtle">Журнал задачи</summary><pre class="control-preview">${esc(j.log)}</pre></details>`:''}</div><div class="control-job-state"><span class="control-pill ${esc(j.state)}">${esc(jobNames[j.state]||j.state)}</span>${j.remoteSubmitted&&j.state==='needs_review'?`<button class="button secondary" data-ctrl="recheck-job" data-job="${esc(j.id)}" data-server="${esc(j.server)}">Перечитать статус</button><button class="button secondary" data-ctrl="ack-job" data-job="${esc(j.id)}" data-host="${esc(j.host)}">Снять блокировку…</button>`:''}</div></div>`).join(''):'<div class="empty">Задач пока нет</div>'}</div></section>`;
 }
 function renderBackups(){
- const rows=controlStatus.backups,server=$('#backupServer')?.value,panel=$('#backupPanel')?.value;
- $('#backupsDashboard').innerHTML=`<div class="control-stats"><div class="control-stat"><span>Зашифрованных копий</span><strong>${rows.length}</strong><small>На сервере управления, в зашифрованном хранилище</small></div><div class="control-stat"><span>Проверена целостность</span><strong>${rows.filter(b=>b.verified).length}</strong><small>Расшифрование и контрольная сумма</small></div><div class="control-stat"><span>Последняя копия</span><strong style="font-size:17px">${rows[0]?fullDate(rows[0].createdAt*1000):'Ещё нет'}</strong><small>Расписание не включено</small></div></div><div class="control-note warning">Сохраните ключ восстановления отдельно от архива. Без него зашифрованные копии не расшифровать. Проверка целостности не означает проверенного восстановления на сервер.</div><div class="control-box"><div class="control-box-head"><div><h3>Создать резервную копию</h3><p>Без остановки работающих служб</p></div><button class="button secondary" data-ctrl="recovery-key">Сохранить ключ восстановления</button></div><div class="control-create-row"><select id="backupServer" aria-label="Сервер резервной копии">${serverOptions(server)}</select><select id="backupPanel" aria-label="Панель резервной копии"><option value="lucx">LucX / 3x-ui</option><option value="mtproxyl">MTProxyL</option></select><button class="button primary" data-ctrl="create-backup">＋ Создать копию</button><button class="button secondary" data-ctrl="refresh-backups">↻ Обновить</button></div></div><div class="control-box"><div class="control-table-wrap"><table class="control-table mobile-card-table"><thead><tr><th>СЕРВЕР / ПАНЕЛЬ</th><th>СОЗДАНА</th><th>РАЗМЕР</th><th>ПРОВЕРКА</th><th>ДЕЙСТВИЯ</th></tr></thead><tbody>${rows.map(b=>`<tr><td><strong>${esc(b.serverName)}</strong><small>${esc(b.host)} · ${panelTitle(b.panel)}</small></td><td data-label="Создана">${fullDate(b.createdAt*1000)}<small>${b.reason==='manual'?'По запросу':b.reason==='initial'?'Первая копия':'Перед изменением'}</small></td><td data-label="Размер">${bytes(b.size)}</td><td><span class="control-pill on">Целостность проверена</span></td><td><div class="control-actions"><button class="button secondary" data-ctrl="download-backup" data-backup="${b.id}">Скачать</button><button class="button secondary" data-ctrl="verify-backup" data-backup="${b.id}">Проверить</button>${b.panel!=='host'?`<button class="button secondary" data-ctrl="restore-backup" data-backup="${b.id}" data-server="${esc(b.server)}">Восстановить…</button>`:'<span class="control-subtle">Ручное восстановление</span>'}</div></td></tr>`).join('')||'<tr><td class="mobile-full-cell" colspan="5">Создайте первую копию выбранной панели.</td></tr>'}</tbody></table></div></div><p class="control-subtle">LucX: согласованный снимок SQLite и TLS-файлы панели. MTProxyL: штатный архив менеджера. Копии содержат секреты и зашифрованы AES-256-CBC с проверкой HMAC-SHA256. ОС, образы Docker и сторонние приложения не входят. Восстановление разрешено на исходный сервер при совпадении версии панели; текущие настройки хоста LucX сохраняются.</p><button class="button secondary" type="button" data-job-history>История задач</button>`;
- if(panel)$('#backupPanel').value=panel;
- const updatePanels=()=>{const s=controlClients?.servers.find(s=>s.server===$('#backupServer').value);for(const o of $('#backupPanel').options)o.disabled=!s?.panels.some(p=>p.panel===o.value&&p.ok);if($('#backupPanel').selectedOptions[0]?.disabled)$('#backupPanel').value=[...$('#backupPanel').options].find(o=>!o.disabled)?.value||''};$('#backupServer').onchange=updatePanels;updatePanels();
+ const root=$('#backupsDashboard'),scoped=controlWorkspaceId('backups');
+ const rows=scoped?controlStatus.backups.filter(b=>b.server===scoped):controlStatus.backups;
+ const sameScope=root.dataset.serverScope===scoped;
+ const server=sameScope?root.querySelector('#backupServer')?.value:'';
+ const panel=sameScope?root.querySelector('#backupPanel')?.value:'';
+ root.dataset.serverScope=scoped;
+ const serverPicker=scoped?'':`<select id="backupServer" aria-label="Сервер резервной копии">${serverOptions(server)}</select>`;
+ root.innerHTML=`<div class="control-stats"><div class="control-stat"><span>Зашифрованных копий</span><strong>${rows.length}</strong><small>На сервере управления, в зашифрованном хранилище</small></div><div class="control-stat"><span>Проверена целостность</span><strong>${rows.filter(b=>b.verified).length}</strong><small>Расшифрование и контрольная сумма</small></div><div class="control-stat"><span>Последняя копия</span><strong style="font-size:17px">${rows[0]?fullDate(rows[0].createdAt*1000):'Ещё нет'}</strong><small>Расписание не включено</small></div></div><div class="control-note warning">Сохраните ключ восстановления отдельно от архива. Без него зашифрованные копии не расшифровать. Проверка целостности не означает проверенного восстановления на сервер.</div><div class="control-box"><div class="control-box-head"><div><h3>Создать резервную копию</h3><p>Без остановки работающих служб</p></div><button class="button secondary" data-ctrl="recovery-key">Сохранить ключ восстановления</button></div><div class="control-create-row">${serverPicker}<select id="backupPanel" aria-label="Панель резервной копии"><option value="lucx">LucX / 3x-ui</option><option value="mtproxyl">MTProxyL</option></select><button class="button primary" data-ctrl="create-backup">＋ Создать копию</button><button class="button secondary" data-ctrl="refresh-backups">${icon('refresh')}Обновить</button></div></div><div class="control-box"><div class="control-table-wrap"><table class="control-table mobile-card-table"><thead><tr><th>${scoped?'ПАНЕЛЬ':'СЕРВЕР / ПАНЕЛЬ'}</th><th>СОЗДАНА</th><th>РАЗМЕР</th><th>ПРОВЕРКА</th><th>ДЕЙСТВИЯ</th></tr></thead><tbody>${rows.map(b=>`<tr><td><strong>${scoped?esc(panelTitle(b.panel)):esc(b.serverName)}</strong>${scoped?'':`<small>${esc(b.host)} · ${esc(panelTitle(b.panel))}</small>`}</td><td data-label="Создана">${fullDate(b.createdAt*1000)}<small>${b.reason==='manual'?'По запросу':b.reason==='initial'?'Первая копия':'Перед изменением'}</small></td><td data-label="Размер">${bytes(b.size)}</td><td><span class="control-pill on">Целостность проверена</span></td><td><div class="control-actions"><button class="button secondary" data-ctrl="download-backup" data-backup="${b.id}">Скачать</button><button class="button secondary" data-ctrl="verify-backup" data-backup="${b.id}">Проверить</button>${b.panel!=='host'?`<button class="button secondary" data-ctrl="restore-backup" data-backup="${b.id}" data-server="${esc(b.server)}">Восстановить…</button>`:'<span class="control-subtle">Ручное восстановление</span>'}</div></td></tr>`).join('')||'<tr><td class="mobile-full-cell" colspan="5">Создайте первую копию выбранной панели.</td></tr>'}</tbody></table></div></div><p class="control-subtle">LucX: согласованный снимок SQLite и TLS-файлы панели. MTProxyL: штатный архив менеджера. Копии содержат секреты и зашифрованы AES-256-CBC с проверкой HMAC-SHA256. ОС, образы Docker и сторонние приложения не входят. Восстановление разрешено на исходный сервер при совпадении версии панели; текущие настройки хоста LucX сохраняются.</p>${scoped?'':'<button class="button secondary" type="button" data-job-history>История задач</button>'}`;
+ const select=$('#backupPanel'),serverSelect=$('#backupServer'),create=root.querySelector('[data-ctrl="create-backup"]');
+ if(panel)select.value=panel;
+ const updatePanels=()=>{
+  const target=scoped||serverSelect.value;
+  const entry=clientCatalogServers(scoped).find(s=>s.server===target);
+  for(const option of select.options)option.disabled=!entry?.panels.some(p=>p.panel===option.value&&p.ok);
+  if(!select.value||select.selectedOptions[0]?.disabled)select.value=[...select.options].find(o=>!o.disabled)?.value||'';
+  create.disabled=!select.value;
+ };
+ if(serverSelect)serverSelect.onchange=updatePanels;
+ updatePanels();
 }
 const updateStateLabels={update_available:'Вышло обновление',latest:'Последняя версия репозитория',ahead:'Установлена версия новее релиза',unknown:'Версия не подтверждена'};
 function updateSourceLink(value,label='Релиз в репозитории ↗'){
@@ -125,17 +224,23 @@ function renderCustomUpdates(s){
  }).join('');
 }
 function renderUpdates(){
+ const scoped=controlWorkspaceId('updates');
+ if(!controlUpdates||controlUpdatesScope!==scoped)return;
  const up=controlUpdates.upstream||{},titles={lucx:'LucX / 3x-ui',telemt:'Движок Telemt',mtproxyl:'Менеджер MTProxyL','mtproxyl-panel':'Веб-панель MTProxyL',os:'Пакеты Ubuntu / Debian'};
  const allServers=controlUpdates.servers;
- if(updatesServerId&&!allServers.some(s=>s.server===updatesServerId))updatesServerId='';
- const servers=updatesServerId?allServers.filter(s=>s.server===updatesServerId):allServers;
+ if(!scoped&&updatesServerId&&!allServers.some(s=>s.server===updatesServerId))updatesServerId='';
+ const server=scoped||updatesServerId;
+ const servers=server?allServers.filter(s=>s.server===server):allServers;
+ const projects=(controlUpdates.projects||[]).filter(p=>!scoped||p.bindings?.[scoped]);
  const statuses=servers.flatMap(s=>Object.values(s.updateStatus||{}));
  const counts={update_available:0,latest:0,ahead:0,unknown:servers.filter(s=>!s.ok).length};
  statuses.forEach(s=>{if(s.state in counts)counts[s.state]++});
- $('#updatesDashboard').innerHTML=`<div class="control-toolbar updates-toolbar"><label class="control-server-filter">Сервер<select id="updatesServer" aria-label="Сервер для обновлений"><option value="">Все серверы</option>${allServers.map(s=>`<option value="${esc(s.server)}" ${s.server===updatesServerId?'selected':''}>${esc(s.name)} · ${esc(s.host)}</option>`).join('')}</select></label><button class="button secondary" data-ctrl="refresh-updates">Проверить версии</button><button class="button secondary" type="button" data-job-history="${esc(updatesServerId)}">История задач</button><span class="control-subtle updates-checked">Серверы ${fullDate(controlUpdates.checkedAt*1000)}<br>Релизы ${fullDate((up.checkedAt||0)*1000)}</span></div>${window.projectCatalogProgressHTML?.(controlUpdates.projects||[])||''}<div class="update-summary" aria-label="Сводка обновлений"><div class="update-summary-item available"><strong>${counts.update_available}</strong><span>Доступны обновления</span></div><div class="update-summary-item latest"><strong>${counts.latest}</strong><span>Последняя версия</span></div><div class="update-summary-item unknown"><strong>${counts.unknown}</strong><span>Нужна проверка</span></div>${counts.ahead?`<div class="update-summary-item"><strong>${counts.ahead}</strong><span>Новее релиза</span></div>`:''}</div><div class="control-note">Статусы сравнивают установленную версию с проверенными стабильными релизами проекта. Пакеты ОС и версии, указанные вручную, проверяются отдельно. Обновление начинается после предпросмотра, подтверждения сервера и резервной копии.</div><div class="control-card-grid">${servers.map(s=>`<article class="control-box" data-update-server="${esc(s.server)}"><div class="control-box-head"><div><h3>${esc(s.name)}</h3><p>${esc(s.host)}</p></div><span class="control-pill ${s.ok?'on':'off'}">${s.ok?'Доступен':'Нет данных'}</span></div>${s.ok?[...(s.versions.lucx?['lucx']:[]),...(s.versions.mtproxyl?['telemt','mtproxyl']:[]),...(s.versions['mtproxyl-panel']?['mtproxyl-panel']:[]),'os'].map(component=>{
+ const serverFilter=scoped?'':`<label class="control-server-filter">Сервер<select id="updatesServer" aria-label="Сервер для обновлений"><option value="">Все серверы</option>${allServers.map(s=>`<option value="${esc(s.server)}" ${s.server===updatesServerId?'selected':''}>${esc(s.name)} · ${esc(s.host)}</option>`).join('')}</select></label>`;
+ const historyLink=scoped?'':`<button class="button secondary" type="button" data-job-history="${esc(updatesServerId)}">История задач</button>`;
+ $('#updatesDashboard').innerHTML=`<div class="control-toolbar updates-toolbar">${serverFilter}<button class="button secondary" data-ctrl="refresh-updates">Проверить версии</button>${historyLink}<span class="control-subtle updates-checked">${scoped?'Сервер':'Серверы'} ${fullDate(controlUpdates.checkedAt*1000)}<br>Релизы ${fullDate((up.checkedAt||0)*1000)}</span></div>${window.projectCatalogProgressHTML?.(projects)||''}<div class="update-summary" aria-label="Сводка обновлений"><div class="update-summary-item available"><strong>${counts.update_available}</strong><span>Доступны обновления</span></div><div class="update-summary-item latest"><strong>${counts.latest}</strong><span>Последняя версия</span></div><div class="update-summary-item unknown"><strong>${counts.unknown}</strong><span>Нужна проверка</span></div>${counts.ahead?`<div class="update-summary-item"><strong>${counts.ahead}</strong><span>Новее релиза</span></div>`:''}</div><div class="control-note">Статусы сравнивают установленную версию с проверенными стабильными релизами проекта. Пакеты ОС и версии, указанные вручную, проверяются отдельно. Обновление начинается после предпросмотра, подтверждения сервера и резервной копии.</div><div class="control-card-grid">${servers.map(s=>`<article class="control-box" data-update-server="${esc(s.server)}">${scoped?'':`<div class="control-box-head"><div><h3>${esc(s.name)}</h3><p>${esc(s.host)}</p></div><span class="control-pill ${s.ok?'on':'off'}">${s.ok?'Доступен':'Нет данных'}</span></div>`}${s.ok?[...(s.versions.lucx?['lucx']:[]),...(s.versions.mtproxyl?['telemt','mtproxyl']:[]),...(s.versions['mtproxyl-panel']?['mtproxyl-panel']:[]),'os'].map(component=>{
  const release=up[component],entries=release?.releases||[],current=component==='os'?s.versions.os:s.versions[component]||'Не определена',status=s.updateStatus?.[component]||{state:'unknown',latest:null,message:'Недостаточно данных для сравнения.'},isOs=component==='os',atLatest=!isOs&&['latest','ahead'].includes(status.state);
  return `<div class="control-update-component"><div><div class="update-component-title"><strong>${titles[component]}</strong>${isOs?'<span class="update-status unknown">Пакеты требуют отдельной проверки</span>':updateStatusHTML(status)}</div><dl class="update-version-pair"><div><dt>${isOs?'Система':'Установлено'}</dt><dd>${esc(current)}</dd></div><div><dt>${isOs?'Источник пакетов':'Последний релиз'}</dt><dd>${esc(isOs?'Репозиторий ОС':status.latest||'Не получен')}</dd></div></dl>${isOs?'<p class="control-subtle">Версия ОС не показывает наличие обновлений пакетов. Предпросмотр обновит индекс APT и покажет точный план.</p>':`<p class="control-subtle">${esc(status.message)}</p>${updateSourceLink(status.sourceUrl)}`}${release&&!release.ok?`<p class="warning">${esc(release.error)}</p>`:''}</div><div class="control-update-actions">${!isOs?`<select data-update-release="${esc(s.server)}:${component}" aria-label="Версия ${titles[component]} на ${esc(s.host)}">${entries.map(r=>`<option value="${esc(r.version)}" ${r.version===updateReleaseChoices.get(s.server+':'+component)?'selected':''}>${esc(r.version)}</option>`).join('')}</select>`:''}<button class="button ${status.state==='update_available'?'primary':'secondary'}" data-ctrl="plan-update" data-component="${component}" data-server="${esc(s.server)}" ${!isOs&&(!entries.length||atLatest)?'disabled':''}>${atLatest?'Обновление не требуется':isOs?'Проверить пакеты…':status.state==='update_available'?'Обновить…':'Предпросмотр'}</button>${component==='telemt'?`<button class="button secondary" data-ctrl="rollback-telemt" data-server="${esc(s.server)}">Откат…</button>`:''}</div></div>`;
- }).join('')+renderCustomUpdates(s)+`<div class="control-update-component"><p>Ядро: ${esc(s.versions.kernel)}<br>Модуль AWG: ${esc(s.versions.awg||'Нет данных')}<br>${s.versions.rebootRequired?'<span class="warning">ОС запрашивает перезагрузку; автоматически не выполняется.</span>':'Запроса перезагрузки ОС нет.'}</p></div>`:`<div class="control-error">${esc(s.error)}</div>`}</article>`).join('')}</div><p class="control-subtle">LucX и Telemt устанавливаются на выбранную опубликованную версию. MTProxyL обновляется штатным CLI, его веб-панель — проверенной сборкой. Если есть локальная правка Zapret2, обновление менеджера блокируется до проверки её совместимости. Неизвестный или устаревший результат не означает актуальную версию.</p>`;window.scheduleProjectCatalogRefresh?.(controlUpdates.projects||[]);
+ }).join('')+renderCustomUpdates(s)+`<div class="control-update-component"><p>Ядро: ${esc(s.versions.kernel)}<br>Модуль AWG: ${esc(s.versions.awg||'Нет данных')}<br>${s.versions.rebootRequired?'<span class="warning">ОС запрашивает перезагрузку; автоматически не выполняется.</span>':'Запроса перезагрузки ОС нет.'}</p></div>`:`<div class="control-error">${esc(s.error)}</div>`}</article>`).join('')}</div><p class="control-subtle">LucX и Telemt устанавливаются на выбранную опубликованную версию. MTProxyL обновляется штатным CLI, его веб-панель — проверенной сборкой. Если есть локальная правка Zapret2, обновление менеджера блокируется до проверки её совместимости. Неизвестный или устаревший результат не означает актуальную версию.</p>`;window.scheduleProjectCatalogRefresh?.(projects);
 }
 async function downloadControl(path,name){const r=await fetch(path,{headers:{'X-Deck-Token':token}});if(!r.ok){const v=await r.json();throw Error(v.error)}const blob=await r.blob(),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
 document.addEventListener('change',e=>{
@@ -173,12 +278,12 @@ document.addEventListener('click',async e=>{
    sections.forEach((s,i)=>{$('#copyControlSecret'+i).onclick=async()=>{try{await navigator.clipboard.writeText(s.body);toast('Скопировано')}catch(e){toast('Скопируйте текст вручную')}};if(s.filename)$('#downloadControlSecret'+i).onclick=()=>{const blob=new Blob([s.body],{type:'text/plain'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=s.filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}});
   }
   if(op==='refresh-backups'){await loadControlStatus();renderBackups()}
-  if(op==='create-backup'){await api('/api/control/backup',{server:$('#backupServer').value,panel:$('#backupPanel').value});toast('Копирование началось. Службы продолжают работать.');await loadControlStatus();renderBackups()}
+  if(op==='create-backup'){const server=controlWorkspaceId('backups')||$('#backupServer')?.value,panel=$('#backupPanel')?.value;if(!server||!panel)throw Error('Нет доступной панели для резервного копирования');await api('/api/control/backup',{server,panel});toast('Копирование началось. Службы продолжают работать.');await loadControlStatus();renderBackups()}
   if(op==='download-backup')await downloadControl('/api/control/download?id='+b.dataset.backup,'server-deck-'+b.dataset.backup+'.sdbackup');
   if(op==='verify-backup'){const r=await api('/api/control/verify',{backup:b.dataset.backup});modal('Проверка резервной копии',`<p class="control-form-note">${esc(r.message)}</p><pre class="control-preview">${esc(JSON.stringify(r.manifest,null,2))}</pre>`)}
   if(op==='restore-backup')showControlPlan(await api('/api/control/plan',{kind:'restore',server:b.dataset.server,backup:b.dataset.backup}));
   if(op==='recovery-key'){modal('Ключ восстановления',`<p class="control-form-note">Сохраните этот файл отдельно от резервных копий, например в защищённом хранилище. Он открывает все копии этого Server Deck. Передавать его на VPS не требуется.</p><div class="modal-actions"><button class="button primary" id="downloadRecoveryKey">Скачать ключ</button></div>`);$('#downloadRecoveryKey').onclick=async()=>{try{await downloadControl('/api/control/recovery-key','server-deck-recovery.key');toast('Ключ загружен. Сохраните его в защищённом месте.')}catch(e){toast(e.message)}}}
-  if(op==='refresh-updates'){window.resetProjectCatalogProgress?.();controlUpdates=await api('/api/control/updates?force=1');renderUpdates()}
+  if(op==='refresh-updates')await loadControlUpdates(true);
   if(op==='rollback-telemt')showControlPlan(await api('/api/control/plan',{kind:'update',server:b.dataset.server,component:'telemt-rollback',version:''}));
   if(op==='plan-update'){const component=b.dataset.component;if(component==='os'){openOsUpdate(b.dataset.server);return}const version=b.closest('.control-update-component').querySelector('select').value;showControlPlan(await api('/api/control/plan',{kind:'update',server:b.dataset.server,component,version}))}
   if(op==='ack-job'){
