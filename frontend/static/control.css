@@ -8,3 +8,48 @@ body label.action-confirm input[type="checkbox"]{flex:0 0 22px;width:22px;height
 body label.action-confirm span{display:block;min-width:0;overflow-wrap:anywhere}
 body label.action-confirm:has(input:checked){border-color:var(--accent,#6484ff);background:#263b7044}
 body label.action-confirm:focus-within{outline:2px solid var(--accent,#6484ff);outline-offset:2px}
+.control-toolbar .control-server-filter {
+ display: grid;
+ flex: 0 1 340px;
+ gap: 5px;
+ margin: 0;
+ min-width: 0;
+}
+.control-toolbar .control-server-filter select {
+ width: 100%;
+ min-width: 0;
+}
+.updates-toolbar .updates-checked {
+ margin-left: auto;
+}
+.client-results {
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ flex-wrap: wrap;
+ gap: 10px;
+ margin: 0 0 10px;
+ color: var(--muted);
+}
+.client-coverage {
+ margin: 14px 0;
+}
+.client-coverage summary,
+.control-job summary {
+ cursor: pointer;
+ padding: 8px 0;
+}
+.client-coverage ul {
+ margin: 6px 0;
+ padding-left: 22px;
+ color: var(--muted);
+}
+@media (max-width: 600px) {
+ body .control-toolbar .control-server-filter {
+  flex-basis: 100%;
+ }
+ .updates-toolbar .updates-checked {
+  flex-basis: 100%;
+  margin-left: 0;
+ }
+}

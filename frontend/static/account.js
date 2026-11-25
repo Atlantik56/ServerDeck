@@ -39,4 +39,3 @@ window.settingsNavigate=async view=>{
  }catch(e){root.innerHTML=`<div class="control-error">${esc(e.message)}</div><button class="button secondary" id="accountRetry">Повторить</button>`;$('#accountRetry').onclick=()=>window.settingsNavigate('settings')}
  finally{accountLoading=false}
 };
-$('#openSettings').onclick=()=>document.querySelector('[data-filter="settings"]').click();

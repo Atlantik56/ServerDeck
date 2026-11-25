@@ -27,6 +27,7 @@ WEB = pathlib.Path('/opt/server-deck-web')
 CONF = pathlib.Path('/etc/server-deck')
 HOME = pathlib.Path('/var/lib/serverdeck')
 HELPERS = pathlib.Path('/usr/local/lib/server-deck')
+RELEASE_STATE = pathlib.Path('/var/lib/server-deck-release')
 UNIT_DIR = pathlib.Path('/etc/systemd/system')
 
 REQUIRED_PACKAGES = ('python3', 'openssh-client', 'openssh-server', 'openssl',
@@ -147,6 +148,20 @@ def install_relative(relative):
     raise ValueError('Неизвестный раздел исходников')
 
 
+def panel_version(source):
+    path = source / 'VERSION'
+    if path.is_symlink():
+        raise ValueError('Небезопасный файл версии панели')
+    if not path.exists():
+        return None
+    if not path.is_file() or path.stat().st_size > 64:
+        raise ValueError('Неверный файл версии панели')
+    version = path.read_text(encoding='utf-8').strip()
+    if not re.fullmatch(r'(?:0|[1-9][0-9]{0,5})(?:\.(?:0|[1-9][0-9]{0,5})){2}', version):
+        raise ValueError('Неверная версия панели')
+    return version
+
+
 def selected_files(source):
     allowed_suffixes = {'.py', '.js', '.css', '.html', '.webmanifest', '.png', '.svg'}
     paths = []
@@ -159,7 +174,11 @@ def selected_files(source):
             if any((source.joinpath(*rel.parts[:count])).is_symlink() for count in range(1, len(rel.parts) + 1)) or path.stat().st_size > 8 * 1024 * 1024:
                 raise ValueError('Небезопасный файл исходников')
             paths.append(rel)
-    for rel in ('backend/server.py', 'backend/web_auth.py', 'backend/account_helper.py', 'backend/deployment_helper.py', 'frontend/static/index.html', 'frontend/pwa/login/index.html'):
+    required = ['backend/server.py', 'backend/web_auth.py', 'backend/account_helper.py', 'backend/deployment_helper.py', 'frontend/static/index.html', 'frontend/pwa/login/index.html']
+    if panel_version(source):
+        required.extend(('backend/panel_release.py', 'backend/panel_updates.py', 'backend/panel_update_worker.py',
+                         'frontend/static/panel-updates.js', 'frontend/static/panel-updates.css'))
+    for rel in required:
         if pathlib.Path(rel) not in paths:
             raise ValueError('Пакет неполон')
     tree = ast.parse((source / 'backend/server.py').read_text(encoding='utf-8'))
@@ -183,7 +202,7 @@ def preflight(source, data):
         raise ValueError('Поддерживаются Ubuntu 24.04 и Debian 12')
     if not pathlib.Path('/run/systemd/system').is_dir() or not shutil.which('apt-get'):
         raise ValueError('Нужен Linux с systemd и APT (не контейнер без systemd)')
-    for path in (APP, WEB, CONF, HOME, HELPERS, pathlib.Path('/etc/caddy'), UNIT_DIR / 'server-deck.service', UNIT_DIR / 'server-deck-auth.service', UNIT_DIR / 'server-deck-certbot-renew.timer', pathlib.Path('/etc/letsencrypt/live/server-deck'), pathlib.Path('/etc/letsencrypt/renewal/server-deck.conf'), pathlib.Path('/etc/letsencrypt/renewal-hooks/deploy/server-deck')):
+    for path in (APP, WEB, CONF, HOME, HELPERS, RELEASE_STATE, pathlib.Path('/etc/caddy'), UNIT_DIR / 'server-deck.service', UNIT_DIR / 'server-deck-auth.service', UNIT_DIR / 'server-deck-certbot-renew.timer', pathlib.Path('/etc/letsencrypt/live/server-deck'), pathlib.Path('/etc/letsencrypt/renewal/server-deck.conf'), pathlib.Path('/etc/letsencrypt/renewal-hooks/deploy/server-deck')):
         if path.exists() or path.is_symlink():
             raise ValueError('Путь уже существует: ' + str(path) + '. Автоматическая перезапись запрещена; нужен отдельный чистый хост.')
     for username in ('serverdeck', 'caddy'):
@@ -331,6 +350,12 @@ def install(source, data, paths):
             public_paths.append('/' + '/'.join(installed.parts[1:]))
     for name in ('web_auth.py', 'account_helper.py', 'deployment_helper.py'):
         put(HELPERS / name, (source / 'backend' / name).read_text(encoding='utf-8'), mode=0o644 if name == 'web_auth.py' else 0o600)
+    version = panel_version(source)
+    if version:
+        for name in ('panel_release.py', 'panel_update_worker.py'):
+            put(HELPERS / name, (source / 'backend' / name).read_text(encoding='utf-8'), mode=0o600)
+        RELEASE_STATE.mkdir(mode=0o755)
+        put(RELEASE_STATE / 'installed.json', json.dumps({'version': version, 'revision': None}) + '\n', mode=0o644)
     for script in ('reset_bootstrap.py', 'reset_account.py'):
         put(HELPERS / script, (source / 'installer' / script).read_text(encoding='utf-8'), mode=0o600)
     put(HELPERS / 'deployment_render.py', (source / 'installer/render.py').read_text(encoding='utf-8'), mode=0o600)

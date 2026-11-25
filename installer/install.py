@@ -107,7 +107,7 @@ def source_files(root):
         rel = p.relative_to(root)
         if not p.is_file():
             continue
-        allowed = (len(rel.parts) == 2 and rel.parts[0] == 'backend' and p.suffix == '.py' and not p.name.startswith(('test_', 'check_', 'prepare_'))) or (len(rel.parts) >= 3 and rel.parts[0] == 'frontend' and rel.parts[1] in ('static', 'pwa') and p.suffix in RUNTIME_SUFFIXES - {'.py'}) or rel.as_posix() in ('installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py', 'scripts/install.sh')
+        allowed = (len(rel.parts) == 2 and rel.parts[0] == 'backend' and p.suffix == '.py' and not p.name.startswith(('test_', 'check_', 'prepare_'))) or (len(rel.parts) >= 3 and rel.parts[0] == 'frontend' and rel.parts[1] in ('static', 'pwa') and p.suffix in RUNTIME_SUFFIXES - {'.py'}) or rel.as_posix() in ('VERSION', 'installer/deploy_linux.py', 'installer/render.py', 'installer/reset_bootstrap.py', 'installer/reset_account.py', 'scripts/install.sh')
         if allowed:
             if any((root.joinpath(*rel.parts[:count])).is_symlink() for count in range(1, len(rel.parts) + 1)) or p.stat().st_size > 8 * 1024 * 1024:
                 raise ValueError('Неподдерживаемый файл пакета: ' + str(rel))

@@ -25,8 +25,8 @@ function renderSoftware(){
  ${selected&&!selected.ok?ctrlError(selected.error):''}
  ${inv?`<div class="software-host"><span class="live-dot"></span><strong>${esc(selected.name)}</strong><span>${esc(inv.os)} · ${esc(inv.arch)}</span><span>Проверено ${clock(selected.checkedAt)}</span></div>${!inv.supported?'<div class="control-error">Автоматические рецепты поддерживают Ubuntu/Debian с systemd на x86_64 и aarch64.</div>':''}<div class="software-grid">${softwareData.components.filter(c=>!c.custom).map(c=>softwareCard(c,selected)).join('')}</div>`:''}
  ${renderProjectCatalog(selected)}<div class="control-note software-note">Новые панели LucX и MTProxyL слушают только localhost и открываются через Server Deck. Установка не заменяет существующие панели. Занятый порт, изменение конфигурации или ошибка копирования остановят задачу.</div>
- <div class="software-existing"><span>Панель уже установлена и имеет другой адрес?</span><button class="button secondary" data-software="existing" ${selected?'':'disabled'}>Подключить существующую</button></div><div id="softwareJobs"></div>`;
- if($('#softwareServer'))$('#softwareServer').onchange=e=>{softwareSelected=e.target.value;renderSoftware()};renderJobs();scheduleProjectCatalogRefresh(softwareData.components.filter(c=>c.custom));
+ <button class="button secondary" type="button" data-job-history="${esc(softwareSelected)}">История задач</button>`;
+ if($('#softwareServer'))$('#softwareServer').onchange=e=>{softwareSelected=e.target.value;renderSoftware()};scheduleProjectCatalogRefresh(softwareData.components.filter(c=>c.custom));
 }
 function softwareCard(c,s){
  const inv=s.inventory,x=inv.components[c.id],entries=softwareVersions(c.id),present=x.installed,dockerAwg=c.id==='awg'&&x.containers?.length;
@@ -62,8 +62,7 @@ document.addEventListener('click',async e=>{
  if(b.dataset.software==='remove-project'){projectRemoveForm(b.dataset.component);return}
  if(b.dataset.software==='recipe-project'){const c=softwareData.components.find(c=>c.id===b.dataset.component),s=softwareData.servers.find(s=>s.server===softwareSelected);if(c?.recipeId&&s?.ok)softwareForm(c.recipeId,c.recipeId==='telemt'||s.inventory.components[c.recipeId]?.installed?'update':'install');return}
  if(b.dataset.software==='plan'){softwareForm(b.dataset.component,b.dataset.kind);return}
- if(b.dataset.software==='updates'){document.querySelector('[data-filter="updates"]').click();return}
- if(b.dataset.software==='existing'){addPanelModal(softwareSelected);return}
+ if(b.dataset.software==='updates'){window.selectUpdateServer?.(softwareSelected);document.querySelector('[data-filter="updates"]').click();return}
  if(b.dataset.software==='retry-project-status'){resetProjectCatalogProgress();if(projectCatalogTimer){clearTimeout(projectCatalogTimer);projectCatalogTimer=null}await pollProjectCatalogStatus();return}
  if(b.dataset.software==='refresh'){resetProjectCatalogProgress();b.disabled=true;try{await loadSoftware(true)}finally{if(b.isConnected)b.disabled=false}}
 });

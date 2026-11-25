@@ -1,0 +1,135 @@
+.panel-updates-view,
+.panel-update-banner {
+ display: none;
+}
+
+.filter-updates .panel-updates-view {
+ display: block;
+ margin-bottom: 24px;
+ scroll-margin-top: 84px;
+}
+
+body:is(.filter-all,:not([class*="filter-"])) .panel-update-banner:not([hidden]) {
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ flex-wrap: wrap;
+ gap: 12px;
+ margin-bottom: 16px;
+ padding: 10px 14px;
+ border: 1px solid #4b6096;
+ border-radius: 10px;
+ background: #182a49;
+ color: #d8e5ff;
+}
+
+.panel-update-card {
+ padding: 20px;
+ border: 1px solid #364966;
+ border-radius: 12px;
+ background: #111d30;
+ color: #d9e5f7;
+}
+
+.panel-update-head,
+.panel-update-actions {
+ display: flex;
+ align-items: center;
+ gap: 10px 14px;
+ flex-wrap: wrap;
+}
+
+.panel-update-head {
+ justify-content: space-between;
+ align-items: flex-start;
+}
+
+.panel-update-head h2 {
+ margin: 0;
+ font-size: 19px;
+ line-height: 1.4;
+}
+
+.panel-update-state {
+ padding: 4px 8px;
+ border: 1px solid #455771;
+ border-radius: 6px;
+ font-size: 12px;
+ color: #bacbe4;
+}
+
+.panel-update-state.is-available {
+ border-color: #6582c4;
+ background: #203b67;
+ color: #d1e1ff;
+}
+
+.panel-update-versions {
+ display: grid;
+ grid-template-columns: repeat(auto-fit,minmax(min(100%,155px),1fr));
+ gap: 10px 18px;
+ margin: 16px 0;
+}
+
+.panel-update-versions dt,
+.panel-update-versions small,
+.panel-update-note {
+ color: #a1b4d0;
+}
+
+.panel-update-versions dt {
+ font-size: 12px;
+}
+
+.panel-update-versions dd {
+ margin: 4px 0 0;
+ font-size: 13px;
+ overflow-wrap: anywhere;
+}
+
+.panel-update-job,
+.panel-update-error,
+.panel-update-note {
+ margin: 12px 0;
+ line-height: 1.55;
+ overflow-wrap: anywhere;
+}
+
+.panel-update-error {
+ color: #f1b4b9;
+}
+
+.panel-update-job {
+ padding: 10px 14px;
+ border: 1px solid #364c69;
+ border-radius: 8px;
+}
+
+.panel-update-job p {
+ margin: 6px 0 0;
+}
+
+.panel-update-actions :is(a,button) {
+ display: inline-flex;
+ align-items: center;
+ min-height: 44px;
+}
+
+.panel-update-link {
+ color: #afc8ff;
+}
+
+.panel-update-steps {
+ padding-inline-start: 1.25rem;
+ line-height: 1.65;
+}
+
+@media (max-width: 600px) {
+ .panel-update-card {
+  padding: 14px;
+ }
+
+ .panel-update-actions button {
+  flex: 1 1 auto;
+ }
+}

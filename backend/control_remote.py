@@ -51,12 +51,12 @@ def lucx(path,body=None,raw=False,ctype='application/json'):
     if not token:raise ValueError('На сервере отсутствует API-токен LucX')
     s=db_settings();port=int(s.get('webPort',2053));base=s.get('webBasePath','/')
     if not base.startswith('/') or '\r' in base or '\n' in base:raise ValueError('Неверный путь панели')
+    public_host=s.get('webDomain') or urlsplit(env.get('XUI_ACCESS_URL','')).hostname
     cert=s.get('webCertFile')
     if cert:
-        conn=pinned_https_connection('127.0.0.1',port,pathlib.Path(cert).read_text(),timeout=45)
+        conn=pinned_https_connection('127.0.0.1',port,pathlib.Path(cert).read_text(),timeout=45,server_name=public_host)
     else:conn=http.client.HTTPConnection('127.0.0.1',port,timeout=45)
     headers={'Authorization':'Bearer '+token}
-    public_host=s.get('webDomain') or urlsplit(env.get('XUI_ACCESS_URL','')).hostname
     if public_host and re.fullmatch(r'[A-Za-z0-9.:-]+',public_host):headers['Host']=public_host
     if body is not None:
         headers['Content-Type']=ctype

@@ -26,7 +26,7 @@ case "$distro:$version" in
 esac
 command -v apt-get >/dev/null || { echo 'APT is required.' >&2; exit 1; }
 # Bootstrap must not modify a running panel or another existing web server.
-for path in /opt/server-deck /opt/server-deck-web /etc/server-deck /var/lib/serverdeck /usr/local/lib/server-deck /etc/caddy; do
+for path in /opt/server-deck /opt/server-deck-web /etc/server-deck /var/lib/serverdeck /var/lib/server-deck-release /usr/local/lib/server-deck /etc/caddy; do
     [ ! -e "$path" ] && [ ! -L "$path" ] || { echo "Existing installation/configuration: $path. Use a clean dedicated host." >&2; exit 1; }
 done
 missing=()

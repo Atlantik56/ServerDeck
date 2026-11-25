@@ -3,7 +3,7 @@ function renderMaintenance(){
   const busy=controlStatus.busyServers?.includes(s.id),job=controlStatus.jobs.find(j=>j.server===s.id&&(j.kind==='reboot'||['os','os-index'].includes(j.component)));
   for(const button of document.querySelectorAll(`[data-reboot="${s.id}"],[data-os-update="${s.id}"]`))button.disabled=busy||!s.status.ok;
   const box=document.querySelector(`[data-server-task="${s.id}"]`);
-  if(box)box.innerHTML=job?`<span class="control-pill ${esc(job.state)}">${esc(jobNames[job.state]||job.state)}</span><span>${esc(job.title)}${job.message?' · '+esc(job.message):''}${job.error?' · '+esc(job.error):''}</span><button class="panel-link" data-maintenance-jobs>Подробности</button>`:'';
+  if(box)box.innerHTML=job?`<span class="control-pill ${esc(job.state)}">${esc(jobNames[job.state]||job.state)}</span><span>${esc(job.title)}${job.message?' · '+esc(job.message):''}${job.error?' · '+esc(job.error):''}</span><button class="panel-link" data-job-history="${esc(s.id)}">История задач</button>`:'';
  }
 }
 window.renderMaintenance=renderMaintenance;
@@ -47,4 +47,4 @@ function openOsUpdate(sid){
  };
 }
 window.openOsUpdate=openOsUpdate;
-document.addEventListener('click',e=>{const reboot=e.target.closest('[data-reboot]');if(reboot){openReboot(reboot.dataset.reboot);return}const os=e.target.closest('[data-os-update]');if(os){openOsUpdate(os.dataset.osUpdate);return}if(e.target.closest('[data-maintenance-jobs]'))modal('Задачи сервера',jobsHTML())});
+document.addEventListener('click',e=>{const reboot=e.target.closest('[data-reboot]');if(reboot){openReboot(reboot.dataset.reboot);return}const os=e.target.closest('[data-os-update]');if(os){openOsUpdate(os.dataset.osUpdate);return}});

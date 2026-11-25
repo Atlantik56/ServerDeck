@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Fixed root helper for Server Deck domain changes. No shell or arbitrary argv.
 
-Install with a dedicated restricted localhost SSH key. The stdin protocol only
-allows inspect, plan and apply. --adopt is a root provisioning command; --worker
-is invoked by a durable systemd unit after a confirmed, single-use plan.
+Install with a dedicated restricted localhost SSH key. The stdin protocol
+accepts fixed deployment and panel update requests. Root-only worker arguments
+are invoked by durable systemd units after an accepted request.
 """
 import argparse
 import copy
@@ -23,6 +23,7 @@ import shlex
 import shutil
 import socket
 import ssl
+import stat
 import subprocess
 import sys
 import time
@@ -580,6 +581,19 @@ def adopt_current():
     write_json(CONFIG, c)
     return inspect()
 
+def panel_update_worker():
+    path = CODE.with_name('panel_update_worker.py')
+    try:
+        info = path.lstat()
+    except OSError:
+        raise DeploymentError('Обновление панели требует установочного помощника Server Deck.') from None
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+        raise DeploymentError('Помощник обновления панели установлен небезопасно.')
+    spec = importlib.util.spec_from_file_location('server_deck_panel_update_worker', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 def protocol(request):
     if not isinstance(request, dict):
@@ -587,11 +601,13 @@ def protocol(request):
     action = request.get('action')
     if action == 'inspect' and set(request) == {'action'}:
         return inspect()
-    if action in ('plan', 'apply'):
+    if action in ('plan', 'apply', 'panel-update'):
         ROOT.mkdir(mode=0o700, parents=True, exist_ok=True)
         with (ROOT / 'protocol.lock').open('a') as guard:
             try:fcntl.flock(guard.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:raise DeploymentError('Другая настройка домена уже выполняется.')
+            except BlockingIOError:raise DeploymentError('Другая операция обслуживания уже выполняется.')
+            if action == 'panel-update':
+                return panel_update_worker().submit(request, sys.modules[__name__])
             return plan(request) if action == 'plan' else apply(request)
     raise DeploymentError('Действие не разрешено.')
 
@@ -603,12 +619,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--adopt', action='store_true')
     parser.add_argument('--worker')
+    parser.add_argument('--panel-worker')
     args = parser.parse_args()
     try:
         if args.adopt:
             result = adopt_current()
         elif args.worker:
             run_worker(args.worker)
+            return
+        elif args.panel_worker:
+            panel_update_worker().run_worker(args.panel_worker, sys.modules[__name__])
             return
         else:
             data = sys.stdin.buffer.read(16385)

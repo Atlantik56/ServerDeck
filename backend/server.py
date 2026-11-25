@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import argparse, atexit, base64, concurrent.futures, http.cookies, json, os, pathlib, re, secrets, signal, socket, subprocess, threading, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse
+from urllib.parse import parse_qs as parse_panel_query, urlparse
 import shlex
 from monitor import HealthStore
 from native_probe import NativeProbe
@@ -17,6 +17,7 @@ from security_release import publication_events
 from outage_diagnostics import OutageDiagnostics
 from fail2ban import Fail2banManager
 from deployment_settings import DeploymentSettings
+from panel_updates import PanelUpdates
 from bot_menu import ReadOnlyBotMenu
 from bot_actions import BotActions
 import public_access
@@ -42,6 +43,7 @@ SECURITY_UPDATES = None
 OUTAGE_DIAGNOSTICS = None
 FAIL2BAN = None
 DEPLOYMENT = None
+PANEL_UPDATES = None
 BOT_ACTIONS = None
 MONITOR_STOP = threading.Event()
 REFRESH_LOCKS = {}
@@ -161,6 +163,12 @@ def deployment_settings():
             c=control()
             DEPLOYMENT=DeploymentSettings(ROOT,KEYDIR,busy_fn=lambda:bool(BUSY) or bool(c.busy) or any(j.get('state') not in ('succeeded','failed','needs_review','reviewed') for j in c.jobs.values()),control=c)
         return DEPLOYMENT
+
+def panel_updates():
+    global PANEL_UPDATES
+    with LOCK:
+        if PANEL_UPDATES is None:PANEL_UPDATES=PanelUpdates(deployment_settings())
+        return PANEL_UPDATES
 
 def fail2ban_manager():
     global FAIL2BAN
@@ -301,9 +309,15 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(403,{'error':'Host rejected'})
         if self.path in ('/', '/index.html'):
             return self.reply(200,(static_directory(ROOT)/'index.html').read_bytes().replace(b'__TOKEN__',TOKEN.encode()),'text/html; charset=utf-8')
-        if self.path in ('/app.js','/account.js','/account.css','/maintenance.js','/health.js','/rf.js','/control.js','/software.js','/software.css','/embedded.js','/embedded.css','/control.css','/style.css','/theme.css','/alerts.js','/alerts.css','/security.js','/security.css','/security-updates.js','/security-updates.css','/outage-diagnostics.js','/outage-diagnostics.css','/fail2ban.js','/fail2ban.css','/deployment-settings.js','/deployment-settings.css'):
+        if self.path in ('/app.js','/account.js','/account.css','/maintenance.js','/health.js','/rf.js','/control.js','/software.js','/software.css','/embedded.js','/embedded.css','/control.css','/style.css','/theme.css','/alerts.js','/alerts.css','/security.js','/security.css','/security-updates.js','/security-updates.css','/outage-diagnostics.js','/outage-diagnostics.css','/fail2ban.js','/fail2ban.css','/deployment-settings.js','/deployment-settings.css','/panel-updates.js','/panel-updates.css'):
             return self.reply(200,(static_directory(ROOT)/self.path[1:]).read_bytes(),'text/javascript; charset=utf-8' if self.path.endswith('.js') else 'text/css; charset=utf-8')
         if not self.auth(): return self.reply(403,{'error':'Откройте панель заново'})
+        path=urlparse(self.path)
+        if path.path=='/api/panel-update':
+            query=parse_panel_query(path.query,keep_blank_values=True)
+            if query not in ({},{'force':['1']}):return self.reply(400,{'error':'Неизвестные параметры проверки обновления.'})
+            manager=panel_updates()
+            return self.reply(200,manager.check(force=True) if query else manager.snapshot())
         if self.path=='/api/deployment':
             try:return self.reply(200,deployment_settings().snapshot())
             except Exception:return self.reply(503,{'error':'Настройки адреса панели временно недоступны'})
@@ -370,8 +384,12 @@ class Handler(BaseHTTPRequestHandler):
             d=json.loads(self.rfile.read(length))
             if not isinstance(d,dict):raise ValueError('Ожидается JSON-объект')
             if self.path not in ('/api/deployment/check','/api/account/logout') and (ROOT/'control-data'/'deployment-freeze').exists():
-                return self.reply(409,{'error':'Идёт смена адреса панели. Новые изменения приостановлены до проверки результата.'})
+                return self.reply(409,{'error':'Идёт обслуживание панели. Новые изменения приостановлены до проверки результата.'})
             action=d.get('action')
+            if self.path=='/api/panel-update/apply':
+                try:return self.reply(202,panel_updates().apply(d))
+                except ValueError as e:return self.reply(400,{'error':str(e)})
+                except Exception:return self.reply(503,{'error':'Не удалось подтвердить запуск обновления. Проверьте статус задачи.'})
             if self.path=='/api/security-updates' or self.path.startswith('/api/security-updates/'):
                 try:
                     if self.path=='/api/security-updates/check':
@@ -571,5 +589,6 @@ if __name__=='__main__':
     threading.Thread(target=monitor_loop,name='health-monitor',daemon=True).start()
     threading.Thread(target=lambda:alerts_manager().run(MONITOR_STOP),name='telegram-alerts',daemon=True).start()
     threading.Thread(target=lambda:security_updates_watch().run(MONITOR_STOP),name='security-update-watch',daemon=True).start()
+    threading.Thread(target=lambda:panel_updates().run(MONITOR_STOP),name='panel-release-watch',daemon=True).start()
     print('Server Deck: http://127.0.0.1:'+str(args.port),flush=True)
     httpd.serve_forever()
