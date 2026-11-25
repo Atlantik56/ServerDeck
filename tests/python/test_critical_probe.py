@@ -177,6 +177,84 @@ class CriticalProbeTests(unittest.TestCase):
                 self.assertFalse(result['awgSupported'])
 
 
+class MTProxyLPanelProbeTests(unittest.TestCase):
+    def setUp(self):
+        self.probe = probe_module()
+        self.probe['mtproxyl_file_exists'] = Mock(side_effect=lambda path: path.endswith('/mtproxyl.sh'))
+        self.probe['mtproxyl_panel_settings'] = Mock(return_value=None)
+        self.probe['mtproxyl_panel_scheme'] = Mock(return_value='http')
+
+    def collect(self, load, active, pid, *socket_rows, sockets_ok=True):
+        run = Mock(return_value=(0, f'MainPID={pid}\nLoadState={load}\nActiveState={active}', ''))
+        self.probe['run'] = run
+        listeners = self.probe['read_tcp_listeners']('\n'.join(socket_rows))
+        result = self.probe['collect_mtproxyl_panel'](listeners, sockets_ok)
+        run.assert_called_once_with(['systemctl', 'show', 'mtproxyl-panel.service', '--no-pager',
+                                     '--property=LoadState,ActiveState,MainPID'], timeout=4)
+        return result
+
+    def test_active_service_pid_and_config_choose_only_web_listener(self):
+        self.probe['mtproxyl_panel_settings'].return_value = (10443, '/admin/proxy/', 'https')
+        status, panel = self.collect('loaded', 'active', 81,
+            'LISTEN 0 1024 *:4433 *:* users:(("mtproxyl-telemt",pid=810,fd=3))',
+            'LISTEN 0 128 127.0.0.1:9091 0.0.0.0:* users:(("panel-python",pid=81,fd=5))',
+            'LISTEN 0 128 [::1]:10443 [::]:* users:(("panel-python",pid=81,fd=6))')
+        self.assertEqual(status, {'managerInstalled': True, 'webPanelState': 'running', 'webPanelInstalled': True})
+        self.assertEqual(panel, {'name': 'MTProxyL', 'port': 10443, 'path': '/admin/proxy/', 'scheme': 'https',
+                                 'domain': '', 'localOnly': True, 'embedded': True})
+        self.probe['mtproxyl_panel_settings'].assert_called_once_with('81')
+        self.probe['mtproxyl_panel_scheme'].assert_not_called()
+
+    def test_proxy_and_manager_api_do_not_imply_a_web_panel(self):
+        status, panel = self.collect('not-found', 'inactive', 0,
+            'State Recv-Q Send-Q Local Address:Port Peer Address:Port Process',
+            'LISTEN 0 1024 *:4433 *:* users:(("mtproxyl-telemt",pid=810,fd=3))',
+            'LISTEN 0 128 127.0.0.1:9090 0.0.0.0:* users:(("mtproxyl-api",pid=811,fd=3))',
+            'LISTEN 0 128 127.0.0.1:9091 0.0.0.0:* users:(("mtproxyl-panel-metrics",pid=812,fd=3))',
+            'LISTEN 0 128 malformed')
+        self.assertEqual(status, {'managerInstalled': True, 'webPanelState': 'missing', 'webPanelInstalled': False})
+        self.assertIsNone(panel)
+        self.probe['mtproxyl_panel_settings'].assert_not_called()
+
+    def test_unambiguous_known_process_can_open_without_systemd(self):
+        status, panel = self.collect('not-found', 'inactive', 0,
+            'LISTEN 0 128 127.0.0.1:10443 0.0.0.0:* users:(("mtproxyl-panel",pid=81,fd=5))')
+        self.assertEqual(status['webPanelState'], 'running')
+        self.assertEqual(panel['port'], 10443)
+        self.assertTrue(panel['localOnly'])
+        self.assertFalse(panel['embedded'])
+
+    def test_loaded_without_listener_is_inactive_or_unknown(self):
+        for state, expected in [('inactive', 'inactive'), ('failed', 'inactive'), ('active', 'unknown')]:
+            with self.subTest(state=state):
+                status, panel = self.collect('loaded', state, 81)
+                self.assertTrue(status['webPanelInstalled'])
+                self.assertEqual(status['webPanelState'], expected)
+                self.assertIsNone(panel)
+        status, panel = self.collect('not-found', 'inactive', 0, sockets_ok=False)
+        self.assertEqual(status['webPanelState'], 'unknown')
+        self.assertIsNone(status['webPanelInstalled'])
+        self.assertIsNone(panel)
+
+    def test_ambiguous_sockets_without_config_do_not_get_an_open_link(self):
+        status, panel = self.collect('loaded', 'active', 81,
+            'LISTEN 0 128 127.0.0.1:10443 0.0.0.0:* users:(("panel-python",pid=81,fd=5))',
+            'LISTEN 0 128 127.0.0.1:10444 0.0.0.0:* users:(("panel-python",pid=81,fd=6))')
+        self.assertEqual(status['webPanelState'], 'unknown')
+        self.assertIsNone(panel)
+
+    def test_custom_toml_returns_only_routing_metadata(self):
+        probe = probe_module()
+        with tempfile.TemporaryDirectory() as directory:
+            config = pathlib.Path(directory) / 'proxy panel.toml'
+            probe['open'] = Mock(side_effect=lambda *_: io.BytesIO(f'/bin/mtproxyl-panel\0--config={config}\0'.encode()))
+            settings = 'listen = "[::1]:10443"\nbase_path = "/proxy/manage"\n[tls]\ncert_file = "/etc/keys/server.pem"\n[auth]\njwt_secret = "fixture-secret"\n'
+            config.write_text(settings)
+            self.assertEqual(probe['mtproxyl_panel_settings']('81'), (10443, '/proxy/manage/', 'https'))
+            config.write_text(settings.replace('/proxy/manage', '/proxy/../manage'))
+            self.assertIsNone(probe['mtproxyl_panel_settings']('81'))
+
+
 class CriticalMonitorTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

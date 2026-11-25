@@ -27,6 +27,7 @@ class EmbedTests(unittest.TestCase):
         self.m=EmbeddedManager((pathlib.Path(__file__).resolve().parents[2] / 'backend'),lambda:self.c,None,8765)
         meta={'base':'/private/','entry':'/private/panel/','port':1234,'scheme':'http','cookies':{'native':'server-secret'},'expiresAt':time.time()+3600}
         self.b=Bridge(self.m,{'id':'s','host':'192.0.2.1'},'lucx',meta,self.up.server_port)
+        self.c.server=lambda sid: self.b.s
     def tearDown(self):self.b.close();self.up.shutdown();self.up.server_close()
     def call(self,path,method='GET',body=None,origin=None,auth=True):
         c=http.client.HTTPConnection('127.0.0.1',self.b.httpd.server_port,timeout=5);headers={}
@@ -59,6 +60,18 @@ class EmbedTests(unittest.TestCase):
         p='/private/panel/api/clients/update/alice'
         self.assertEqual(self.call(p,'POST','{}','http://evil.invalid')[0],403);self.assertFalse(self.up.seen)
         self.assertEqual(self.call(p,'POST','{}',self.b.origin)[0],200);self.c.create_backup.assert_called_once();self.assertFalse(self.c.busy)
+    def test_old_bridge_cannot_modify_server_after_ssh_identity_changes(self):
+        self.c.server=lambda sid: dict(self.b.s, key='changed')
+        p='/private/panel/api/clients/update/alice'
+        self.assertEqual(self.call(p,'POST','{}',self.b.origin)[0],502)
+        self.assertFalse(self.up.seen);self.c.create_backup.assert_not_called()
+    def test_cleanup_of_old_binding_keeps_newer_session(self):
+        old=Mock(s=dict(self.b.s,key='old'))
+        current=Mock(s=dict(self.b.s,key='current'))
+        self.m.bridges={('s','lucx'):old,('s','mtproxyl'):current}
+        self.m.close_server('s',[self.b.s['host'],None,None,'old'])
+        old.close.assert_called_once();current.close.assert_not_called()
+        self.assertEqual(self.m.bridges,{('s','mtproxyl'):current})
     def test_update_cannot_bypass_central_plan(self):
         self.assertEqual(self.call('/private/panel/api/server/updatePanel','POST','{}',self.b.origin)[0],502)
         self.assertFalse(self.up.seen);self.c.create_backup.assert_not_called()

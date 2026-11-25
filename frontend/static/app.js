@@ -1,5 +1,6 @@
 const $=s=>document.querySelector(s), token=$('meta[name="deck-token"]').content;
 let state={servers:[],activity:[]}, filter='all', updating=false;
+let stateLoad=null;
 let serverWorkspace=null, restoreWorkspaceOnLoad=true;
 const serverSections=new Map([
  ['overview',['Обзор','server']], ['services',['Службы','activity']],
@@ -53,7 +54,12 @@ function metric(label,value,percent,options={}){const known=knownNumber(percent)
 function serviceRow(s,v){const active=v.state==='active',exists=v.loaded,unknown=v.collectionOk===false||!['active','inactive','failed','activating','deactivating','reloading'].includes(v.state),kind=unknown?'unknown':active?'active':v.state==='failed'?'failed':'inactive',label=unknown?'Нет данных':exists?(stateNames[v.state]||v.state):'Не установлена',name=v.name?'Docker · '+v.name:titles[v.unit]||String(v.unit||'Служба').replace(/\.service$/,'');return `<div class="service-row"><div class="service-info"><div class="service-title"><span class="status-dot ${kind==='active'?'':kind==='failed'?'failed':'inactive'}" aria-hidden="true"></span><span class="service-name">${esc(name)}</span><span class="service-state-chip state-${kind}">${esc(label)}</span></div><div class="service-meta mono">${esc(v.image||v.unit||'—')}${v.awg?`<span class="service-awg-meta">${v.awg.collectionOk===true?Array.isArray(v.awg.interfaces)&&v.awg.interfaces.length?'AWG · '+esc(v.awg.interfaces.join(', ')):'AWG · интерфейс не найден':'AWG · нет данных проверки'}</span>`:''}</div></div><div class="service-actions">${exists?`<button class="small-btn" title="Журнал" aria-label="Журнал ${esc(v.unit)}" data-action="logs" data-server="${esc(s.id)}" data-unit="${esc(v.unit)}">${icon('logs')}</button><button class="small-btn ${active?'mutating-button':''}" title="${active?'Перезапустить':'Запустить'}" aria-label="${active?'Перезапустить':'Запустить'} ${esc(v.unit)}" data-action="${active?'restart':'start'}" data-server="${esc(s.id)}" data-unit="${esc(v.unit)}">${icon(active?'refresh':'play')}</button>${active?`<button class="small-btn stop" title="Остановить" aria-label="Остановить ${esc(v.unit)}" data-action="stop" data-server="${esc(s.id)}" data-unit="${esc(v.unit)}">${icon('stop')}</button>`:''}`:''}</div></div>`}
 function containerRows(s,items,expanded){const active=items.filter(x=>x.state==='active'),others=items.filter(x=>x.state!=='active');return active.map(v=>serviceRow(s,v)).join('')+(others.length?`<details class="stopped" data-server-detail="${esc(s.id)}:containers"${expanded?' open':''}><summary>Другие состояния контейнеров <span class="mono">${others.length}</span></summary>${others.map(v=>serviceRow(s,v)).join('')}</details>`:'')}
 function vpn(v,collectionOk=true){const latest=knownNumber(v.latestHandshake)?v.latestHandshake:null,age=latest?Math.max(0,Math.floor(Date.now()/1000-latest)):null,handshake=!collectionOk||latest===null?'Нет данных':latest===0?'Ещё не было':age<60?age+' с назад':age<3600?Math.floor(age/60)+' мин назад':age<86400?Math.floor(age/3600)+' ч назад':Math.floor(age/86400)+' д назад',online=collectionOk&&knownNumber(v.online)&&knownNumber(v.peers)?v.online+' / '+v.peers:'—',port=/^\d+$/.test(String(v.port??''))&&Number(v.port)>0&&Number(v.port)<65536?String(v.port):'—',errors=knownNumber(v.counters?.rx_errors)?v.counters.rx_errors:null;return `<div class="vpn-box"><div class="vpn-title"><div class="vpn-interface">${icon('network')}<strong class="mono">${esc(v.interface||'AWG')}</strong><span class="vpn-port mono">UDP ${esc(port)}</span></div><span class="service-state-chip ${collectionOk?'state-active':'state-unknown'}">${collectionOk?'Интерфейс обнаружен':'Неполная проверка'}</span></div><div class="vpn-details"><div class="vpn-stat"><span class="vpn-stat-label">${icon('download')}Получено</span><strong class="mono">${collectionOk&&knownNumber(v.rx)?bytes(v.rx):'—'}</strong></div><div class="vpn-stat"><span class="vpn-stat-label">${icon('upload')}Отправлено</span><strong class="mono">${collectionOk&&knownNumber(v.tx)?bytes(v.tx):'—'}</strong></div><div class="vpn-stat"><span class="vpn-stat-label">Peers · handshake &lt; 3 мин</span><strong class="mono">${esc(online)}</strong></div><div class="vpn-stat vpn-stat-handshake"><span class="vpn-stat-label">Последний handshake</span><strong class="mono">${esc(handshake)}</strong></div></div>${errors>0?`<p class="vpn-warning">${icon('alert')}RX errors: <strong class="mono">${esc(errors)}</strong><span>накопительный счётчик</span></p>`:''}</div>`}
-function panelLink(s,p){const embeddedKind=p.name==='3x-ui / LucX'?'lucx':p.name==='MTProxyL'?'mtproxyl':null;if(embeddedKind)return `<button class="panel-link" data-embed-panel="${embeddedKind}" data-server="${esc(s.id)}"><span class="panel-link-label">Открыть ${esc(p.name)}</span><span class="panel-link-icon">${icon('app')}</span></button>`;if(p.url&&/^https?:\/\//.test(p.url))return `<a class="panel-link" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer"><span class="panel-link-label">${esc(p.name)}</span><span class="panel-link-icon">${icon('external')}</span></a>`;if(p.localOnly)return `<button class="panel-link" data-panel="${esc(p.name)}" data-server="${esc(s.id)}"><span class="panel-link-label">${esc(p.name)}</span><span class="panel-link-icon">${icon('terminal')} SSH</span></button>`;let domain=p.domain||s.host;if(!/^[A-Za-z0-9.-]+$/.test(domain))domain=s.host;let path=p.path||'/';if(!path.startsWith('/'))path='/'+path;const port=Number(p.port);if(!Number.isInteger(port)||port<1||port>65535)return `<span class="panel-link panel-link-unavailable" aria-disabled="true"><span class="panel-link-label">${esc(p.name)} · адрес не указан</span></span>`;const url=`${p.scheme==='https'?'https':'http'}://${domain}:${port}${path}`;return `<a class="panel-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer"><span class="panel-link-label">${esc(p.name)}</span><span class="panel-link-icon">${icon('external')}</span></a>`}
+function embeddedPanelKind(panel){
+ if(panel.url||panel.embedded===false)return null;
+ if(panel.name==='3x-ui / LucX')return 'lucx';
+ return panel.name==='MTProxyL'&&panel.embedded===true?'mtproxyl':null;
+}
+function panelLink(s,p){const embeddedKind=embeddedPanelKind(p);if(embeddedKind)return `<button class="panel-link" data-embed-panel="${embeddedKind}" data-server="${esc(s.id)}"><span class="panel-link-label">Открыть ${esc(p.name)}</span><span class="panel-link-icon">${icon('app')}</span></button>`;if(p.url&&/^https?:\/\//.test(p.url))return `<a class="panel-link" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer"><span class="panel-link-label">${esc(p.name)}</span><span class="panel-link-icon">${icon('external')}</span></a>`;if(p.localOnly)return `<button class="panel-link" data-panel="${esc(p.name)}" data-server="${esc(s.id)}"><span class="panel-link-label">${esc(p.name)}</span><span class="panel-link-icon">${icon('terminal')} SSH</span></button>`;let domain=p.domain||s.host;if(!/^[A-Za-z0-9.-]+$/.test(domain))domain=s.host;let path=p.path||'/';if(!path.startsWith('/'))path='/'+path;const port=Number(p.port);if(!Number.isInteger(port)||port<1||port>65535)return `<span class="panel-link panel-link-unavailable" aria-disabled="true"><span class="panel-link-label">${esc(p.name)} · адрес не указан</span></span>`;const url=`${p.scheme==='https'?'https':'http'}://${domain}:${port}${path}`;return `<a class="panel-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer"><span class="panel-link-label">${esc(p.name)}</span><span class="panel-link-icon">${icon('external')}</span></a>`}
 function serverResources(d){
  const cpu=knownNumber(d.cpu)?d.cpu:null;
  const memory=d.memory&&knownNumber(d.memory.used)&&knownNumber(d.memory.total)&&d.memory.total>0?d.memory:null;
@@ -90,6 +96,7 @@ function workspaceOverview(s){
  <section class="server-workspace-card">
   <div class="server-workspace-card-head"><h2>Обслуживание</h2></div>
   <div class="server-workspace-actions">
+   <button type="button" class="button secondary" data-edit-server="${esc(s.id)}">${icon('server')}Настроить сервер</button>
    <button type="button" class="button secondary" data-fail2ban-server="${esc(s.id)}" ${disabled}>${icon('check')}Настроить Fail2ban</button>
    <button type="button" class="button secondary" data-reboot="${esc(s.id)}" ${disabled}>${icon('power')}Перезагрузить сервер</button>
   </div>
@@ -151,51 +158,290 @@ function renderActivity(){
  const rows=s?state.activity.filter(a=>a.serverId?a.serverId===s.id:a.action!=='password-change'&&uniqueName&&a.server===s.name):state.activity;
  $('#activityRows').innerHTML=rows.length?rows.map(a=>`<div class="activity-row"><time>${clock(a.time)}</time><span>${esc(a.server)}</span><strong>${esc(a.unit)}</strong><span>${esc({start:'Запуск',stop:'Остановка',restart:'Перезапуск','password-change':'Смена пароля'}[a.action]||a.action)}</span><span class="result">${a.ok?'✓ Выполнено':'Ошибка'}</span></div>`).join(''):'<div class="empty">Действий пока нет</div>';
 }
-async function load(){
- if(updating||window.accountReauthRequired)return;
+function load(){
+ if(stateLoad||window.accountReauthRequired)return stateLoad;
  updating=true;
  $('#refresh').disabled=true;
- try{
-  state=await api('/api/state');
-  render();
-  if(restoreWorkspaceOnLoad){
-   restoreWorkspaceOnLoad=false;
-   restoreWorkspace();
-  }
-  await window.loadControlStatus?.();
-  await window.loadHealth?.();
- }catch(e){toast(e.message);$('#updateLabel').textContent='Не удалось обновить'}
- finally{updating=false;$('#refresh').disabled=false}
+ stateLoad=(async()=>{
+  try{
+   state=await api('/api/state');
+   render();
+   if(restoreWorkspaceOnLoad){
+    restoreWorkspaceOnLoad=false;
+    restoreWorkspace();
+   }
+   await window.loadControlStatus?.();
+   await window.loadHealth?.();
+  }catch(e){toast(e.message);$('#updateLabel').textContent='Не удалось обновить'}
+ })().finally(()=>{
+  updating=false;
+  $('#refresh').disabled=false;
+  stateLoad=null;
+ });
+ return stateLoad;
 }
 $('#refresh').onclick=async()=>{if(updating)return;$('#refresh').disabled=true;try{await Promise.all(state.servers.map(s=>api('/api/refresh',{server:s.id})));await load()}catch(e){toast(e.message)}finally{$('#refresh').disabled=false}};
 document.addEventListener('click',async e=>{const addPanel=e.target.closest('[data-add-panel]');if(addPanel){addPanelModal(addPanel.dataset.addPanel);return}const panel=e.target.closest('[data-panel]');if(panel){panel.disabled=true;try{const r=await api('/api/panel',{server:panel.dataset.server,panel:panel.dataset.panel});modal('Панель готова',`<p class="form-note">Соединение через SSH-туннель установлено.</p><a class="button primary" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Открыть ${esc(panel.dataset.panel)} ↗</a>`)}catch(e){toast(e.message)}finally{panel.disabled=false}return}const b=e.target.closest('[data-action]');if(b){const {action,server,unit}=b.dataset,s=state.servers.find(s=>s.id===server);if(action==='logs'){modal('Журнал · '+(titles[unit]||unit),'<div class="loading"><div class="spinner"></div>Загружаем журнал…</div>');try{const r=await api('/api/action',{server,unit,action});$('#modalBody').innerHTML=`<p class="form-note">${esc(s.name)} · последние 100 строк</p><pre class="logs">${esc(r.logs||r.error||'Записей нет')}</pre>`}catch(e){$('#modalBody').innerHTML=`<p class="form-error">${esc(e.message)}</p>`}return}modal(action==='stop'?'Остановить сервис?':action==='restart'?'Перезапустить сервис?':'Запустить сервис?',`<p class="form-note"><strong>${esc(titles[unit]||unit)}</strong><br>${esc(s.name)} · ${esc(s.host)}<br>${action==='stop'?'Подключения этого сервиса будут недоступны до следующего запуска.':action==='restart'?'Текущие подключения этого сервиса могут кратковременно прерваться.':'Будет запущена установленная служба.'}</p><div class="form-error" id="actionError"></div><div class="modal-actions"><button class="button secondary" id="cancelAction">Отмена</button><button class="button primary" id="confirmAction">${{start:'Запустить',stop:'Остановить',restart:'Перезапустить'}[action]}</button></div>`);$('#cancelAction').onclick=()=>$('#modal').close();$('#confirmAction').onclick=async()=>{$('#confirmAction').disabled=true;try{const r=await api('/api/action',{server,unit,action});if(!r.ok)throw Error(r.error||'Служба не выполнила действие');$('#modal').close();toast('Действие выполнено: '+unit);await load()}catch(e){$('#actionError').textContent=e.message;$('#confirmAction').disabled=false}};return}
 const add=e.target.closest('[data-add-service]');if(add){const sid=add.dataset.addService;modal('Добавить сервис','<div class="loading"><div class="spinner"></div>Читаем установленные службы…</div>');try{const r=await api('/api/inventory',{server:sid});const existing=state.servers.find(s=>s.id===sid).services;const units=r.units.filter(x=>!existing.includes(x.unit));$('#modalBody').innerHTML=`<label>Поиск службы<input id="unitSearch" placeholder="Например: telemt, nginx или docker"></label><select id="unitSelect" size="9"></select><p class="form-note">Добавление показывает сервис в панели. Его состояние не изменится.</p><div id="serviceError" class="form-error"></div><div class="modal-actions"><button class="button primary" id="saveService">Добавить в панель</button></div>`;const update=()=>{$('#unitSelect').innerHTML=units.filter(x=>x.unit.toLowerCase().includes($('#unitSearch').value.toLowerCase())).map(x=>`<option value="${esc(x.unit)}">${esc(x.unit)} · ${esc(x.enabled)}</option>`).join('')};update();$('#unitSearch').oninput=update;$('#saveService').onclick=async()=>{if(!$('#unitSelect').value)return;$('#saveService').disabled=true;try{await api('/api/services',{server:sid,unit:$('#unitSelect').value});$('#modal').close();toast('Сервис добавлен');await load()}catch(e){$('#serviceError').textContent=e.message;$('#saveService').disabled=false}}}catch(e){$('#modalBody').innerHTML=`<p class="form-error">${esc(e.message)}</p>`}return}
 const retry=e.target.closest('[data-retry]');if(retry){retry.disabled=true;try{await api('/api/refresh',{server:retry.dataset.retry});await load()}catch(e){toast(e.message)}finally{retry.disabled=false}}
 });
-$('#addServer').onclick=async()=>{
- modal('Новый сервер','<div class="loading"><div class="spinner"></div>Читаем доступные SSH-ключи…</div>');
+function startRegistryDialog(title,message){
+ modal(title,`<p class="loading" data-registry-loading>${esc(message)}</p>`);
+ return $('[data-registry-loading]');
+}
+
+async function reloadRegistryState(){
+ await stateLoad;
+ await load();
+}
+
+function sshKeyTarget({host,user,port}){
+ return host?`${user?user+'@':''}${host}${port?':'+port:''}`:'';
+}
+
+function sshKeyServerLabel(server){
+ return [server.name,sshKeyTarget(server)].filter(Boolean).join(' · ');
+}
+
+function sshKeyAssignment(key){
+ if(key.usedBy.length)return key.usedBy.map(sshKeyServerLabel).join(' / ');
+ const original=key.createdFor&&sshKeyTarget(key.createdFor);
+ return original?'Без привязки · создан для '+original:'Без привязки';
+}
+
+function showGeneratedKey(form,generated,keyEntries,describeKey){
+ const select=form.elements.key;
+ const entry={name:generated.key,usedBy:[],createdFor:{
+  host:generated.host,user:generated.user,port:generated.port??form.elements.port.value,
+ }};
+ keyEntries.set(entry.name,entry);
+ if(![...select.options].some(option=>option.value===generated.key)){
+  select.add(new Option(sshKeyAssignment(entry)+' — '+entry.name,entry.name));
+ }
+ select.value=generated.key;
+ describeKey();
+ const setup=form.querySelector('#keySetup');
+ setup.innerHTML=`<div class="key-ready">Ключ создан для ${esc(generated.user)}@${esc(generated.host)}</div>
+  <p class="key-fingerprint">${esc(generated.fingerprint)}</p>
+  <div class="command-title"><strong>1. Выполните на VPS под root</strong><button type="button" class="button secondary" id="copyInstall">Копировать</button></div>
+  <pre class="logs key-command" id="installCommand">${esc(generated.installCommand)}</pre>
+  <p class="key-hint">Команда добавляет публичный ключ пользователю ${esc(generated.user)}. Повторный запуск пропустит уже добавленный ключ.</p>
+  <div class="command-title"><strong>2. Проверьте SSH с сервера управления</strong><button type="button" class="button secondary" id="copyConnect">Копировать</button></div>
+  <pre class="logs key-command">${esc(generated.connectCommand)}</pre>
+  <p class="key-hint">При первом подключении сверьте отпечаток SSH-хоста с данными провайдера.</p>`;
+ setup.hidden=false;
+ for(const [id,command] of [['copyInstall',generated.installCommand],['copyConnect',generated.connectCommand]]){
+  form.querySelector('#'+id).onclick=async()=>{
+   try{await navigator.clipboard.writeText(command);toast('Команда скопирована')}
+   catch(_){toast('Выделите команду и скопируйте её вручную')}
+  };
+ }
+}
+
+async function openServerSettings(server=null){
+ const editing=!!server;
+ const title=editing?'Настройки сервера':'Новый сервер';
+ const submittingText=editing?'Проверить и сохранить':'Проверить и добавить';
+ const pending=startRegistryDialog(title,'Читаем доступные SSH-ключи…');
  try{
-  const r=await api('/api/keys');
-  $('#modalBody').innerHTML=`<form id="serverForm"><div class="form-grid"><label class="wide">Название<input name="name" required placeholder="Например: резервный VPN"></label><label class="wide">IP-адрес или домен<input name="host" required placeholder="203.0.113.10" autocomplete="off"></label><label>SSH-пользователь<input name="user" value="root" required></label><label>SSH-порт<input name="port" type="number" value="22" min="1" max="65535" required></label><div class="wide"><label>SSH-ключ на сервере управления<div class="key-picker"><select name="key" required><option value="">Выберите ключ</option>${r.keys.map(k=>`<option>${esc(k)}</option>`).join('')}</select><button class="button secondary" type="button" id="generateKey">＋ Создать ключ</button></div></label><p class="key-hint">Отдельный Ed25519-ключ без парольной фразы. Приватная часть хранится на сервере управления с правами 600.</p></div></div><section id="keySetup" class="key-setup" hidden></section><p class="form-note">После установки ключа проверьте отпечаток сервера при первом SSH-подключении с сервера управления. Затем нажмите «Проверить и добавить».</p><div id="serverError" class="form-error"></div><div class="modal-actions"><button class="button primary" id="saveServer">Проверить и добавить</button></div></form>`;
-  const form=$('#serverForm');
-  for(const name of ['host','user','port'])form.elements[name].addEventListener('input',()=>{$('#keySetup').hidden=true});
-  $('#generateKey').onclick=async()=>{
-   const values=Object.fromEntries(new FormData(form));$('#serverError').textContent='';
-   if(!values.host){$('#serverError').textContent='Сначала укажите IP или домен сервера.';form.elements.host.focus();return}
-   const button=$('#generateKey');button.disabled=true;button.textContent='Создаём…';$('#saveServer').disabled=true;
-   for(const name of ['host','user','port'])form.elements[name].disabled=true;
+  const {keys,items}=await api('/api/keys');
+  if(!pending.isConnected||!$('#modal').open)return;
+  const availableKey=keys.includes(server?.key);
+  const keyEntries=new Map(items.map(item=>[item.name,item]));
+  const options=keys.map(name=>{
+   const key=keyEntries.get(name);
+   const label=key?sshKeyAssignment(key)+' — '+name:name;
+   return `<option value="${esc(name)}"${name===server?.key?' selected':''}>${esc(label)}</option>`;
+  }).join('');
+  modal(title,`<form id="serverForm">
+   ${editing?`<div class="software-target"><strong>${esc(server.name)}</strong><span>${esc(server.host)}</span></div>`:''}
+   <div class="form-grid">
+    <label class="wide">Название<input name="name" value="${esc(server?.name)}" maxlength="80" required placeholder="Например: резервный VPN"></label>
+    <label class="wide">IP-адрес или домен<input name="host" value="${esc(server?.host)}" required placeholder="203.0.113.10" autocomplete="off"></label>
+    <label>SSH-пользователь<input name="user" value="${esc(server?.user||'root')}" required></label>
+    <label>SSH-порт<input name="port" type="number" value="${esc(server?.port??22)}" min="1" max="65535" required></label>
+    <div class="wide">
+     <label for="serverKey">SSH-ключ на сервере управления</label>
+     <div class="key-picker">
+      <select id="serverKey" name="key" aria-describedby="serverKeyBinding" required><option value="">Выберите ключ</option>${options}</select>
+      <button class="button secondary" type="button" id="generateKey">Создать ключ</button>
+     </div>
+     <p class="form-note" id="serverKeyBinding" role="status" hidden></p>
+     ${editing&&!availableKey&&server.key?`<p class="form-note">Текущий ключ <strong>${esc(server.key)}</strong> отсутствует на сервере управления. Выберите другой или создайте новый.</p>`:''}
+    </div>
+   </div>
+   <section id="keySetup" class="key-setup" hidden></section>
+   <p class="form-note">${editing?'Изменение связи сохраняется после проверки SSH. Перед сменой ключа добавьте его публичную часть к учётной записи на VPS.':'Выберите ключ, публичная часть которого добавлена на VPS, или создайте новый.'}</p>
+   <div id="serverError" class="form-error" role="alert"></div>
+   <div class="modal-actions">
+    ${editing?'<button type="button" class="button secondary server-registry-danger" id="removeServer">Удалить сервер…</button>':''}
+    <button type="button" class="button secondary" id="cancelServer">Отмена</button>
+    <button class="button primary" id="saveServer">${submittingText}</button>
+   </div>
+  </form>`);
+  const form=$('#serverForm'), save=$('#saveServer'), generate=$('#generateKey'), errorBox=$('#serverError');
+  const connectionInputs=['host','user','port'].map(name=>form.elements[name]);
+  const keyBinding=$('#serverKeyBinding');
+  const describeKey=()=>{
+   const key=keyEntries.get(form.elements.key.value);
+   keyBinding.textContent=key?sshKeyAssignment(key):'';
+   keyBinding.hidden=!key;
+  };
+  describeKey();
+  let busy=false;
+  for(const element of connectionInputs)element.addEventListener('input',()=>{form.querySelector('#keySetup').hidden=true});
+  form.elements.key.addEventListener('change',()=>{
+   form.querySelector('#keySetup').hidden=true;
+   describeKey();
+  });
+  form.querySelector('#cancelServer').onclick=()=>$('#modal').close();
+  if(editing)form.querySelector('#removeServer').onclick=()=>removeRegisteredServer(server);
+  generate.onclick=async()=>{
+   if(busy||!connectionInputs.every(element=>element.reportValidity()))return;
+   const values=Object.fromEntries(new FormData(form));
+   busy=true;
+   errorBox.textContent='';
+   generate.disabled=save.disabled=true;
+   generate.textContent='Создаём…';
+   for(const element of connectionInputs)element.disabled=true;
    try{
     const generated=await api('/api/keys/generate',values);
-    const option=document.createElement('option');option.value=generated.key;option.textContent=generated.key;form.elements.key.appendChild(option);form.elements.key.value=generated.key;
-    const setup=$('#keySetup');setup.hidden=false;
-    setup.innerHTML=`<div class="key-ready">✓ Ключ создан для ${esc(generated.user)}@${esc(generated.host)}</div><p class="key-fingerprint">${esc(generated.fingerprint)}</p><div class="command-title"><strong>1. Выполните на сервере под root</strong><button type="button" class="button secondary" id="copyInstall">Копировать</button></div><pre class="logs key-command" id="installCommand">${esc(generated.installCommand)}</pre><p class="key-hint">Команда добавит только публичный ключ пользователю ${esc(generated.user)}. Существующие ключи сохранятся; повторный запуск не создаст дубликат.</p><div class="command-title"><strong>2. Выполните на VPS управления под root</strong><button type="button" class="button secondary" id="copyConnect">Копировать</button></div><pre class="logs key-command">${esc(generated.connectCommand)}</pre><p class="key-hint">Проверьте отпечаток хоста перед подтверждением доверия. Пароль сервера в эту панель вводить не нужно.</p>`;
-    for(const [id,text] of [['copyInstall',generated.installCommand],['copyConnect',generated.connectCommand]])$('#'+id).onclick=async()=>{try{await navigator.clipboard.writeText(text);toast('Команда скопирована')}catch(e){toast('Выделите команду и скопируйте её вручную')}};
-   }catch(e){$('#serverError').textContent=e.message}
-   finally{button.disabled=false;button.textContent='＋ Создать ключ';$('#saveServer').disabled=false;for(const name of ['host','user','port'])form.elements[name].disabled=false}
+    if(form.isConnected&&$('#modal').open)showGeneratedKey(form,generated,keyEntries,describeKey);
+   }catch(error){errorBox.textContent=error.message}
+   finally{
+    busy=false;
+    generate.disabled=save.disabled=false;
+    generate.textContent='Создать ключ';
+    for(const element of connectionInputs)element.disabled=false;
+   }
   };
-  form.onsubmit=async e=>{e.preventDefault();$('#saveServer').disabled=true;$('#saveServer').textContent='Проверяем подключение…';try{await api('/api/servers',Object.fromEntries(new FormData(form)));$('#modal').close();toast('Сервер добавлен');await load()}catch(e){$('#serverError').textContent=e.message;$('#saveServer').disabled=false;$('#saveServer').textContent='Проверить и добавить'}};
- }catch(e){$('#modalBody').innerHTML=`<p class="form-error">${esc(e.message)}</p>`}
-};
+  form.onsubmit=async event=>{
+   event.preventDefault();
+   if(busy)return;
+   busy=true;
+   const values=Object.fromEntries(new FormData(form));
+   if(editing)values.server=server.id;
+   save.disabled=generate.disabled=true;
+   save.textContent='Проверяем подключение…';
+   errorBox.textContent='';
+   for(const element of connectionInputs)element.disabled=true;
+   try{
+    await api(editing?'/api/servers/update':'/api/servers',values);
+    if(form.isConnected)$('#modal').close();
+    toast(editing?'Настройки сервера сохранены':'Сервер добавлен');
+    await reloadRegistryState();
+   }catch(error){
+    errorBox.textContent=error.message;
+    save.disabled=generate.disabled=false;
+    save.textContent=submittingText;
+    for(const element of connectionInputs)element.disabled=false;
+    busy=false;
+   }
+  };
+ }catch(error){
+  if(pending.isConnected&&$('#modal').open)pending.replaceWith(registryError(error));
+ }
+}
+
+function registryError(error){
+ const element=document.createElement('p');
+ element.className='form-error';
+ element.setAttribute('role','alert');
+ element.textContent=error.message;
+ return element;
+}
+
+function confirmRegistryRemoval({title,name,detail,description,confirmation,onCancel,onConfirm}){
+ modal(title,`<form id="registryConfirmForm">
+  <div class="software-target"><strong>${esc(name)}</strong>${detail?`<span>${esc(detail)}</span>`:''}</div>
+  <p class="form-note">${esc(description)}</p>
+  <label class="control-check action-confirm"><input type="checkbox" id="registryConfirm" required>${esc(confirmation)}</label>
+  <div class="form-error" role="alert" id="registryConfirmError"></div>
+  <div class="modal-actions">
+   <button type="button" class="button secondary" id="registryConfirmCancel">Отмена</button>
+   <button class="button server-registry-danger" id="registryConfirmSubmit" disabled>Удалить</button>
+  </div>
+ </form>`);
+ const form=$('#registryConfirmForm'), check=$('#registryConfirm'), submit=$('#registryConfirmSubmit'), errorBox=$('#registryConfirmError');
+ let busy=false;
+ check.onchange=()=>{submit.disabled=busy||!check.checked};
+ $('#registryConfirmCancel').onclick=onCancel;
+ form.onsubmit=async event=>{
+  event.preventDefault();
+  if(busy||!check.checked)return;
+  busy=true;
+  submit.disabled=check.disabled=true;
+  errorBox.textContent='';
+  try{await onConfirm(form)}
+  catch(error){
+   errorBox.textContent=error.message;
+   busy=false;
+   check.disabled=false;
+   submit.disabled=!check.checked;
+  }
+ };
+}
+
+function removeRegisteredServer(server){
+ confirmRegistryRemoval({
+  title:'Удалить сервер из панели?',name:server.name,detail:server.host,
+  description:'Запись будет исключена из списка серверов и мониторинга Server Deck. Это действие относится к панели управления.',
+  confirmation:'Подтверждаю удаление записи об этом сервере',
+  onCancel:()=>openServerSettings(server),
+  onConfirm:async form=>{
+   await api('/api/servers/remove',{server:server.id,confirmed:true});
+   if(form.isConnected)$('#modal').close();
+   toast('Сервер удалён из панели');
+   await reloadRegistryState();
+  }
+ });
+}
+
+async function showKeyManager(){
+ const pending=startRegistryDialog('SSH-ключи','Проверяем, какие серверы используют ключи…');
+ try{
+  const {items}=await api('/api/keys');
+  if(!pending.isConnected||!$('#modal').open)return;
+  modal('SSH-ключи',`<p class="form-note">Ключи подключения с сервера управления. Перед удалением используемого ключа выберите другой в настройках нужных серверов.</p>
+   ${items.length?`<ul class="server-key-list">${items.map(key=>`<li class="server-key-row">
+    <div><strong class="mono">${esc(key.name)}</strong>
+     ${key.usedBy.length?`<ul class="server-key-bindings" aria-label="Привязанные VPS">${key.usedBy.map(server=>`<li>${esc(sshKeyServerLabel(server))}</li>`).join('')}</ul>`:`<p>${esc(sshKeyAssignment(key))}</p>`}
+     ${key.reason?`<p class="form-note">${esc(key.reason)}</p>`:''}
+    </div>
+    <button type="button" class="button secondary server-registry-danger" data-remove-key="${esc(key.name)}" ${key.removable?'':'disabled'} aria-label="${esc('Удалить ключ '+key.name)}">Удалить…</button>
+   </li>`).join('')}</ul>`:'<p class="form-note">SSH-ключей пока нет.</p>'}
+   <div class="modal-actions"><button type="button" class="button secondary" id="closeKeyManager">Закрыть</button></div>`);
+  $('#closeKeyManager').onclick=()=>$('#modal').close();
+  for(const button of $('#modalBody').querySelectorAll('[data-remove-key]:not(:disabled)')){
+   button.onclick=()=>removeLocalKey(button.dataset.removeKey);
+  }
+ }catch(error){
+  if(pending.isConnected&&$('#modal').open)pending.replaceWith(registryError(error));
+ }
+}
+
+function removeLocalKey(key){
+ confirmRegistryRemoval({
+  title:'Удалить SSH-ключ?',name:key,
+  description:'Файлы ключа будут удалены с сервера управления. Разрешения SSH на каждом VPS хранятся отдельно в authorized_keys.',
+  confirmation:'Подтверждаю удаление выбранного ключа из Server Deck',
+  onCancel:showKeyManager,
+  onConfirm:async form=>{
+   await api('/api/keys/remove',{key,confirmed:true});
+   toast('SSH-ключ удалён');
+   if(form.isConnected&&$('#modal').open)await showKeyManager();
+  }
+ });
+}
+
+$('#addServer').onclick=()=>openServerSettings();
+$('#manageKeys').onclick=showKeyManager;
+document.addEventListener('click',event=>{
+ const button=event.target.closest('[data-edit-server]');
+ if(!button)return;
+ const server=state.servers.find(item=>item.id===button.dataset.editServer);
+ if(server)openServerSettings(server);
+});
 const mainViews={
  all:['Серверы'],health:['Здоровье серверов','История нагрузки, сбоев служб и счётчиков AWG.'],
  availability:['Доступность','Проверки из России и история SSH с сервера управления.'],
@@ -295,9 +541,9 @@ function renderWorkspace(reset=false){
  const s=state.servers.find(item=>item.id===serverWorkspace?.id);
  if(!s)return;
  const {section}=serverWorkspace,[status,label]=serverStatus(s),checked=s.status?.checkedAt;
+ $('#serverWorkspaceTitle').textContent=s.name;
+ $('#serverWorkspaceHost').textContent=s.user+'@'+s.host+':'+s.port;
  if(reset){
-  $('#serverWorkspaceTitle').textContent=s.name;
-  $('#serverWorkspaceHost').textContent=s.user+'@'+s.host+':'+s.port;
   const nav=$('#serverWorkspaceNav');
   nav.innerHTML=[...serverSections].map(([key,[title,drawing]])=>
    `<button type="button" data-server-section="${key}"${parentServerSection(section)===key?' aria-current="page"':''}>${icon(drawing)}<span>${title}</span></button>`
@@ -327,17 +573,25 @@ function workspaceUpdates(s){
 }
 function renderServerPanels(s){
  const st=s.status||{},panels=Array.isArray(st.data?.panels)?st.data.panels:[];
+ const proxy=st.data?.mtproxyl;
+ const proxyMessages={
+  missing:'MTProxyL установлен. Веб-панель MTProxyL устанавливается отдельно.',
+  inactive:'Веб-панель MTProxyL установлена, её служба остановлена.',
+  unknown:'Панель не смогла подтвердить адрес веб-интерфейса MTProxyL.'
+ };
+ const proxyMessage=st.ok&&(proxy?.managerInstalled||proxy?.webPanelInstalled)?proxyMessages[proxy.webPanelState]:'';
+ const proxyNotice=proxyMessage?`<div class="control-note"><p role="status">${proxyMessage}</p>${proxy.webPanelState==='missing'?`<button type="button" class="button secondary" data-software-server="${esc(s.id)}">Открыть каталог компонентов</button>`:''}</div>`:'';
  const tiles=panels.map(p=>{
   let target=p.localOnly?'Локальный порт · SSH':(p.domain||s.host)+(p.port?':'+p.port:'');
   if(p.url){try{target=new URL(p.url).hostname}catch(_){target='Адрес панели'}}
   const lucx=p.name==='3x-ui / LucX',mtproxyl=p.name==='MTProxyL';
   const moduleKind=lucx?'lucx':mtproxyl?'mtproxyl':'web';
   const moduleType=lucx?'VPN-панель':mtproxyl?'Telegram-прокси':'Веб-интерфейс';
-  const protocol=lucx||mtproxyl?'Встроена':p.localOnly?'SSH':p.scheme==='https'||p.url?.startsWith('https:')?'HTTPS':'HTTP';
+  const protocol=embeddedPanelKind(p)?'Встроена':p.localOnly?'SSH':p.scheme==='https'||p.url?.startsWith('https:')?'HTTPS':'HTTP';
   return `<article class="panel-tile module-${moduleKind}"><div class="panel-tile-top"><div class="panel-tile-icon">${lucx?'<span class="panel-tile-lettermark">3X</span>':mtproxyl?'<span class="panel-tile-lettermark">MT</span>':icon('app')}</div><span class="panel-kind">${protocol}</span></div><span class="panel-tile-type">${moduleType}</span><h3>${esc(p.name)}</h3><p class="panel-tile-address mono">${esc(target)}</p><div class="panel-tile-action">${panelLink(s,p)}</div></article>`;
  }).join('');
  return `<section class="server-workspace-card"><div class="server-workspace-card-head"><h2>Панели и приложения</h2><button type="button" class="button secondary" data-add-panel="${esc(s.id)}" aria-haspopup="dialog">${icon('plus')}Подключить панель</button></div>
- <div class="panel-tiles">${st.ok&&tiles?tiles:`<div class="empty panel-empty">${icon(st.ok?'app':'alert')}<strong>${st.ok?'Панели пока не подключены':'Нет свежих данных о панелях'}</strong><span>${st.ok?'Укажите адрес уже установленной панели.':'Проверьте SSH-подключение к серверу.'}</span></div>`}</div></section>`;
+ <div class="panel-tiles">${st.ok&&tiles?tiles:proxyNotice?'':`<div class="empty panel-empty">${icon(st.ok?'app':'alert')}<strong>${st.ok?'Панели пока не подключены':'Нет свежих данных о панелях'}</strong><span>${st.ok?'Укажите адрес уже установленной панели.':'Проверьте SSH-подключение к серверу.'}</span></div>`}</div>${proxyNotice}</section>`;
 }
 function addPanelModal(sid){modal('Добавить панель',`<form id="panelForm"><div class="form-grid"><label class="wide">Название<input name="name" placeholder="Например: Remnawave, Portainer, Cockpit" required></label><label class="wide">Способ подключения<select id="panelKind" name="kind"><option value="url">Открытый адрес или домен</option><option value="tunnel">Локальный порт через SSH</option></select></label><label class="wide" id="panelUrlWrap">Адрес панели<input name="url" type="url" placeholder="https://panel.example.com"></label><label id="panelPortWrap" hidden>Порт на сервере<input name="port" type="number" min="1" max="65535" placeholder="3000"></label><label id="panelSchemeWrap" hidden>Протокол<select name="scheme"><option>http</option><option>https</option></select></label><label class="wide" id="panelPathWrap" hidden>Путь<input name="path" value="/" placeholder="/"></label></div><p class="form-note">Панель уже должна быть установлена. Здесь добавляется доступ к ней; для LucX и MTProxyL доступен встроенный вход; другие приложения открываются по своему адресу.</p><div class="form-error" id="panelError"></div><div class="modal-actions"><button class="button primary" id="savePanel">Добавить панель</button></div></form>`);$('#panelKind').onchange=()=>{const tunnel=$('#panelKind').value==='tunnel';$('#panelUrlWrap').hidden=tunnel;$('#panelUrlWrap input').disabled=tunnel;for(const id of ['panelPortWrap','panelSchemeWrap','panelPathWrap']){$('#'+id).hidden=!tunnel;$('#'+id+' input, #'+id+' select').disabled=!tunnel}};$('#panelForm').onsubmit=async e=>{e.preventDefault();$('#savePanel').disabled=true;try{await api('/api/panels',{...Object.fromEntries(new FormData(e.target)),server:sid});$('#modal').close();toast('Панель добавлена');await load()}catch(e){$('#panelError').textContent=e.message;$('#savePanel').disabled=false}}}
 document.addEventListener('DOMContentLoaded',load,{once:true});

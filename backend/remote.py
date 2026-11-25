@@ -1,4 +1,4 @@
-import concurrent.futures, datetime, http.client, json, os, re, shutil, sqlite3, subprocess, sys, time
+import concurrent.futures, datetime, http.client, ipaddress, json, os, pathlib, re, shutil, sqlite3, subprocess, sys, time
 
 request = json.loads(sys.argv[1])
 def run(args, timeout=12):
@@ -92,6 +92,131 @@ def collect_host_awg():
     except (OSError,ValueError,TypeError,subprocess.SubprocessError):
         return awg,False,supported
 
+def read_tcp_listeners(sockets):
+    listeners = []
+    for line in sockets.splitlines():
+        parts = line.split(maxsplit=5)
+        if len(parts) < 5 or parts[0] != 'LISTEN':
+            continue
+        address, sep, raw_port = parts[3].rpartition(':')
+        if not sep or not re.fullmatch('[0-9]{1,5}', raw_port):
+            continue
+        port = int(raw_port)
+        if not 1 <= port <= 65535:
+            continue
+        owners = re.findall(r'\("([^"\n]+)",pid=([1-9][0-9]*),', parts[5]) if len(parts) == 6 else []
+        listeners.append((address.strip('[]'), port, owners))
+    return listeners
+
+def local_listener(address):
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return address.lower() == 'localhost'
+    return ip.is_loopback or bool(getattr(ip, 'ipv4_mapped', None) and ip.ipv4_mapped.is_loopback)
+
+def mtproxyl_file_exists(path):
+    try:
+        return pathlib.Path(path).is_file()
+    except OSError:
+        return False
+
+def mtproxyl_panel_settings(pid):
+    """Return routing metadata only. Authentication data never leaves the host."""
+    config = pathlib.Path('/etc/mtproxyl-panel/config.toml')
+    if pid:
+        try:
+            with open(f'/proc/{pid}/cmdline', 'rb') as command:
+                args = command.read(65536).decode().rstrip('\0').split('\0')
+        except (OSError, UnicodeError):
+            args = []
+        for index, arg in enumerate(args):
+            name, separator, value = arg.partition('=')
+            if name in ('--config', '-config'):
+                if not separator:
+                    value = args[index + 1] if index + 1 < len(args) else ''
+                config = pathlib.Path(value)
+                if not config.is_absolute():
+                    return None
+                break
+    try:
+        import tomllib
+        if not config.is_file():
+            return None
+        with config.open('rb') as source:
+            data = source.read(131073)
+        if len(data) > 131072:
+            return None
+        settings = tomllib.loads(data.decode())
+        listen = settings.get('listen', ':8080')
+        port = int(listen.rsplit(':', 1)[-1]) if isinstance(listen, str) and ':' in listen else 0
+        base = settings.get('base_path') or '/'
+        if not isinstance(base, str) or len(base) > 512 or not 1 <= port <= 65535:
+            return None
+        base = '/' + base.strip('/')
+        if not re.fullmatch(r'/(?:[A-Za-z0-9._~-]+/)*[A-Za-z0-9._~-]*', base) or any(part in ('.', '..') for part in base.split('/')):
+            return None
+        tls = settings.get('tls', {})
+        scheme = 'https' if isinstance(tls, dict) and tls.get('cert_file') else 'http'
+        return port, base.rstrip('/') + '/', scheme
+    except (ImportError, OSError, ValueError):
+        return None
+
+def mtproxyl_panel_scheme(port, address):
+    target = '::1' if ':' in address and not address.startswith('::ffff:') else '127.0.0.1'
+    conn = http.client.HTTPConnection(target, port, timeout=2)
+    try:
+        conn.request('GET', '/')
+        response = conn.getresponse()
+        if b'HTTP request to an HTTPS server' in response.read(256):
+            return 'https'
+    except (OSError, http.client.HTTPException):
+        pass
+    finally:
+        conn.close()
+    return 'http'
+
+def collect_mtproxyl_panel(listeners, sockets_ok):
+    manager_installed = mtproxyl_file_exists('/opt/mtproxyl/mtproxyl.sh')
+    unit = {}
+    try:
+        code, out, _ = run(['systemctl', 'show', 'mtproxyl-panel.service', '--no-pager',
+                            '--property=LoadState,ActiveState,MainPID'], timeout=4)
+        if code == 0:
+            unit = dict(line.split('=', 1) for line in out.splitlines() if '=' in line)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    load_state = unit.get('LoadState')
+    active_state = unit.get('ActiveState')
+    pid = unit.get('MainPID', '')
+    pid = pid if active_state in ('active', 'reloading') and re.fullmatch('[1-9][0-9]{0,9}', pid) and pid != '1' else ''
+    exact = [item for item in listeners if any(owner_pid == pid for _, owner_pid in item[2])] if pid else []
+    named = [item for item in listeners if any(name == 'mtproxyl-panel' for name, _ in item[2])]
+    candidates = exact or named
+    if candidates:
+        settings = mtproxyl_panel_settings(pid if exact else '')
+        if settings:
+            port, base, scheme = settings
+            candidates = [item for item in candidates if item[1] == port]
+        if len({port for _, port, _ in candidates}) == 1:
+            address, port, _ = candidates[0]
+            if not settings:
+                base, scheme = '/', mtproxyl_panel_scheme(port, address)
+            local_only = scheme == 'http' or all(local_listener(address) for address, _, _ in candidates)
+            panel = dict(name='MTProxyL', port=port, path=base, scheme=scheme, domain='',
+                         localOnly=local_only, embedded=bool(exact and settings))
+            return dict(managerInstalled=manager_installed, webPanelState='running', webPanelInstalled=True), panel
+        return dict(managerInstalled=manager_installed, webPanelState='unknown', webPanelInstalled=True), None
+
+    artifacts = any(mtproxyl_file_exists(path) for path in (
+        '/usr/local/bin/mtproxyl-panel', '/etc/mtproxyl-panel/config.toml', '/opt/etc/mtproxyl-panel/config.toml'))
+    if load_state in ('loaded', 'masked') or artifacts:
+        state = 'inactive' if active_state in ('inactive', 'failed') else 'unknown'
+        return dict(managerInstalled=manager_installed, webPanelState=state, webPanelInstalled=True), None
+    if load_state == 'not-found' and sockets_ok:
+        return dict(managerInstalled=manager_installed, webPanelState='missing', webPanelInstalled=False), None
+    return dict(managerInstalled=manager_installed, webPanelState='unknown', webPanelInstalled=None), None
+
 def redact(text):
     text = re.sub(r'(?i)((?:password|private.?key|preshared.?key|header.?protection.?key|api.?token|secret)\s*[:=]\s*)\S+', r'\1[скрыто]', text)
     return re.sub(r'(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{43}=(?!\w)', '[ключ скрыт]', text)
@@ -137,23 +262,15 @@ else:
         settings = dict(c.execute('select key,value from settings')); c.close()
         panels.append({'name': '3x-ui / LucX', 'port': int(settings.get('webPort', '2053')), 'path': settings.get('webBasePath', '/'), 'scheme': 'https' if settings.get('webCertFile') else 'http', 'domain': settings.get('webDomain', ''), 'localOnly':not bool(settings.get('webCertFile'))})
     except (OSError, sqlite3.Error, ValueError): pass
-    _, sockets, _ = run(['ss', '-lntp'])
-    listening_tcp=set()
-    for line in sockets.splitlines()[1:]:
-        parts=line.split()
-        if len(parts)>3 and not parts[3].startswith(('127.','[::1]','::1:')):
-            try:listening_tcp.add(int(parts[3].rsplit(':',1)[1]))
-            except ValueError:pass
-    for line in sockets.splitlines():
-        if 'mtproxyl-panel' in line:
-            address = line.split()[3]
-            port=int(address.rsplit(':',1)[1]);scheme='http';local=address.startswith(('127.','[::1]'))
-            try:
-                conn=http.client.HTTPConnection('127.0.0.1',port,timeout=2);conn.request('GET','/');response=conn.getresponse();body=response.read(256);conn.close()
-                if b'HTTP request to an HTTPS server' in body:scheme='https'
-            except (OSError,http.client.HTTPException):pass
-            panels.append({'name': 'MTProxyL', 'port': port, 'path': '/', 'scheme': scheme, 'domain': '', 'localOnly':local or scheme=='http'})
-            break
+    try:
+        ss_code, sockets, _ = run(['ss', '-lntp'])
+    except (OSError, subprocess.SubprocessError):
+        ss_code, sockets = 1, ''
+    listeners = read_tcp_listeners(sockets)
+    listening_tcp = {port for address, port, _ in listeners if not local_listener(address)}
+    mtproxyl, mtproxyl_panel = collect_mtproxyl_panel(listeners, ss_code == 0)
+    if mtproxyl_panel:
+        panels.append(mtproxyl_panel)
     # Caddy's local admin API supplies host routing metadata only; no config or credentials leave the server.
     try:
         conn=http.client.HTTPConnection('127.0.0.1',2019,timeout=2);conn.request('GET','/config/apps/http/servers');response=conn.getresponse();routes=json.loads(response.read(1048576));conn.close()
@@ -173,4 +290,5 @@ else:
     cpu_end=list(map(int,open('/proc/stat').readline().split()[1:9]));total=sum(cpu_end)-sum(cpu_start);idle=sum(cpu_end[3:5])-sum(cpu_start[3:5])
     _,failed,_=run(['systemctl','list-units','--state=failed','--type=service','--plain','--no-legend','--no-pager'])
     result = {'hostname': os.uname().nodename, 'kernel': os.uname().release, 'time': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'uptime': float(open('/proc/uptime').read().split()[0]), 'load': os.getloadavg(), 'cpu':round(max(0,min(100,(total-idle)/total*100)),1) if total else None, 'cpuIntervalSeconds':round(time.monotonic()-cpu_started,2), 'cores':os.cpu_count(), 'bootId':open('/proc/sys/kernel/random/boot_id').read().strip(), 'rebootRequired':os.path.exists('/var/run/reboot-required'), 'failedUnits':[line.split()[0] for line in failed.splitlines() if line.split() and line.split()[0].endswith('.service')], 'swap':{'total':mem.get('SwapTotal',0),'used':mem.get('SwapTotal',0)-mem.get('SwapFree',0)}, 'memory': {'total': mem['MemTotal'], 'used': mem['MemTotal']-mem['MemAvailable']}, 'disk': {'total': stat.f_blocks*stat.f_frsize, 'used': (stat.f_blocks-stat.f_bfree)*stat.f_frsize,'available':stat.f_bavail*stat.f_frsize,'inodesTotal':stat.f_files,'inodesFree':stat.f_favail}, 'services': states, 'containers':containers, 'awg': awg, 'awgSupported':awg_supported, 'dockerSupported':docker_supported, 'collectionOk':collection_ok, 'panels': panels, 'listeningTcp':sorted(listening_tcp)}
+    result['mtproxyl'] = mtproxyl
 print(json.dumps(result, ensure_ascii=False))

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-import argparse, atexit, base64, concurrent.futures, http.cookies, json, os, pathlib, re, secrets, signal, socket, subprocess, threading, time
+import argparse, atexit, base64, concurrent.futures, http.cookies, json, os, pathlib, re, secrets, signal, socket, subprocess, tempfile, threading, time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from contextlib import contextmanager
 from urllib.parse import parse_qs as parse_panel_query, urlparse
 import shlex
 from monitor import HealthStore
 from native_probe import NativeProbe
 from mac_probe_client import MacProbeClient
 from cheburcheck import Cheburcheck
-from control import Control
+from control import Control, server_binding
+from keypairs import inspect_keys, key_stamp, remove_local_key
 from embedded import EmbeddedManager
 from account import Account,AccountError
 from alerts import AlertManager, DEFAULT_CONFIG as ALERT_DEFAULT_CONFIG
@@ -47,15 +49,21 @@ PANEL_UPDATES = None
 BOT_ACTIONS = None
 MONITOR_STOP = threading.Event()
 REFRESH_LOCKS = {}
+KEY_TESTS = {}
 KEYDIR = pathlib.Path.home() / '.ssh'
 REMOTE = (ROOT / 'remote.py').read_text()
 DEFAULTS = []
 
 def write_config(servers):
-    tmp = CONFIG.with_suffix('.tmp')
-    fd = os.open(str(tmp), os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
-    with os.fdopen(fd, 'w') as f: json.dump(servers, f, ensure_ascii=False, indent=2)
-    os.replace(str(tmp), str(CONFIG))
+    fd, temporary = tempfile.mkstemp(dir=CONFIG.parent, prefix='.'+CONFIG.name+'-')
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(servers, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, CONFIG)
+    finally:
+        pathlib.Path(temporary).unlink(missing_ok=True)
 
 def servers():
     with LOCK: return json.loads(CONFIG.read_text())
@@ -63,17 +71,156 @@ def servers():
 def find(sid):
     return next((s for s in servers() if s['id'] == sid), None)
 
-def valid_server(data):
-    host = data.get('host', '').strip()
+def valid_server(data, existing=None):
+    host = str(data.get('host', '')).strip()
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.-]{0,252}', host): raise ValueError('Укажите IPv4 или DNS-имя сервера')
-    user = data.get('user', 'root').strip()
+    user = str(data.get('user', 'root')).strip()
     if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', user): raise ValueError('Неверное имя SSH-пользователя')
-    key = data.get('key', '')
-    p = (KEYDIR / key).resolve()
-    if p.parent != KEYDIR.resolve() or not p.is_file() or p.name.endswith('.pub'): raise ValueError('Выберите приватный ключ из ~/.ssh')
-    port = int(data.get('port', 22))
+    raw_port = str(data.get('port', 22))
+    if not re.fullmatch(r'[0-9]{1,5}', raw_port): raise ValueError('Неверный SSH-порт')
+    port = int(raw_port)
     if not 1 <= port <= 65535: raise ValueError('Неверный порт')
-    return dict(id=secrets.token_hex(6), name=str(data.get('name') or host)[:80], host=host, user=user, port=port, key=key, services=[])
+    details = dict(name=(str(data.get('name') or '').strip() or host)[:80],
+                   host=host, user=user, port=port, key=data.get('key', ''))
+    if existing is None:
+        return dict(id=secrets.token_hex(6), services=[], **details)
+    return dict(existing, **details)
+
+
+def check_duplicate_server(rows, server):
+    target = (server['host'].lower().rstrip('.'), server['port'])
+    if any(row['id'] != server['id'] and (row['host'].lower().rstrip('.'), row['port']) == target for row in rows):
+        raise ValueError('Сервер с этим адресом и портом уже добавлен.')
+
+
+@contextmanager
+def checked_server_identity(server):
+    """Verify the selected identity without saving a connection on failure."""
+    key = server['key']
+    with LOCK:
+        stamp = key_stamp(KEYDIR, key)
+        KEY_TESTS[key] = KEY_TESTS.get(key, 0) + 1
+    try:
+        inventory = ssh(server, {'action': 'inventory'}, isolated=True)
+        if not isinstance(inventory, dict) or not isinstance(inventory.get('units'), list):
+            raise ValueError('SSH-адаптер вернул неполный ответ проверки.')
+        yield inventory, stamp
+    finally:
+        with LOCK:
+            KEY_TESTS[key] -= 1
+            if not KEY_TESTS[key]:
+                del KEY_TESTS[key]
+
+
+def add_server(data):
+    server = valid_server(data)
+    with LOCK:
+        check_duplicate_server(servers(), server)
+    with checked_server_identity(server) as (inventory, stamp):
+        known = ('x-ui','telemt','mtproxy','amnezia','awg-quick','zapret','caddy','nginx','fail2ban')
+        server['services'] = [item['unit'] for item in inventory['units'] if any(word in item['unit'] for word in known)]
+        with LOCK:
+            rows = servers()
+            check_duplicate_server(rows, server)
+            if key_stamp(KEYDIR, server['key']) != stamp:
+                raise ValueError('SSH-ключ изменился во время проверки. Повторите подключение.')
+            rows.append(server)
+            write_config(rows)
+    return {'ok': True}
+
+
+def check_server_idle(control_plane, sid):
+    if (sid in control_plane.busy or any(key[0] == sid for key in BUSY) or
+            any(job.get('server') == sid and (job.get('state') not in ('succeeded', 'failed', 'needs_review', 'reviewed') or
+                                            job.get('state') == 'needs_review' and job.get('remoteSubmitted'))
+                for job in control_plane.jobs.values())):
+        raise ValueError('Завершите или проверьте незавершённые операции с этим сервером.')
+
+
+def invalidate_server(sid, control_plane, connection_changed):
+    CACHE.pop(sid, None)
+    control_plane.clients_cache.pop(sid, None)
+    control_plane.software_cache.pop(sid, None)
+    if not connection_changed:
+        return (), None
+    for key in [key for key, plan in control_plane.plans.items() if plan.get('server') == sid]:
+        del control_plane.plans[key]
+    processes = [TUNNELS.pop(key)[0] for key in list(TUNNELS) if key[0] == sid]
+    return processes, EMBEDDED
+
+
+def disconnect_server(sid, processes, manager, binding=None):
+    for process in processes:
+        if process.poll() is None:
+            try:
+                process.terminate()
+            except OSError:
+                pass
+    if manager is not None:
+        manager.close_server(sid, binding)
+
+
+def refresh_guard(sid):
+    with LOCK:
+        return REFRESH_LOCKS.setdefault(sid, threading.RLock())
+
+
+def update_server(data):
+    if set(data) != {'server', 'name', 'host', 'user', 'port', 'key'}:
+        raise ValueError('Укажите сервер и настройки SSH.')
+    sid = data['server']
+    with LOCK:
+        existing = find(sid)
+        if existing is None:
+            raise ValueError('Сервер не найден.')
+        current_control = control()
+        check_server_idle(current_control, sid)
+        replacement = valid_server(data, existing)
+        changed = server_binding(existing) != server_binding(replacement)
+        check_duplicate_server(servers(), replacement)
+
+    def save(stamp=None):
+        with refresh_guard(sid):
+            with LOCK:
+                rows = servers()
+                current = next((value for value in rows if value['id'] == sid), None)
+                if current != existing:
+                    raise ValueError('Настройки сервера уже изменились. Откройте форму заново.')
+                check_server_idle(current_control, sid)
+                check_duplicate_server(rows, replacement)
+                if changed and key_stamp(KEYDIR, replacement['key']) != stamp:
+                    raise ValueError('SSH-ключ изменился во время проверки. Повторите подключение.')
+                write_config([replacement if value['id'] == sid else value for value in rows])
+                processes, manager = invalidate_server(sid, current_control, changed)
+            if changed:
+                disconnect_server(sid, processes, manager, server_binding(existing))
+
+    if changed:
+        with checked_server_identity(replacement) as (_, stamp):
+            save(stamp)
+    else:
+        save()
+    return {'ok': True, 'server': sid}
+
+
+def remove_server(data):
+    if set(data) != {'server', 'confirmed'} or data['confirmed'] is not True:
+        raise ValueError('Подтвердите удаление сервера из Server Deck.')
+    sid = data['server']
+    if not isinstance(sid, str):
+        raise ValueError('Сервер не найден.')
+    with refresh_guard(sid):
+        with LOCK:
+            rows = servers()
+            remaining = [row for row in rows if row['id'] != sid]
+            if len(remaining) == len(rows):
+                raise ValueError('Сервер не найден.')
+            current_control = control()
+            check_server_idle(current_control, sid)
+            write_config(remaining)
+            processes, manager = invalidate_server(sid, current_control, True)
+        disconnect_server(sid, processes, manager)
+    return {'ok': True}
 
 def generate_key(data):
     host=str(data.get('host','')).strip();user=str(data.get('user','root')).strip();port=int(data.get('port',22))
@@ -88,7 +235,7 @@ def generate_key(data):
     reservation.mkdir(mode=0o700)
     try:
         if path.exists() or path.with_suffix('.pub').exists():raise ValueError('Имя ключа уже занято')
-        p=subprocess.run(['ssh-keygen','-q','-t','ed25519','-f',str(path),'-C','server-deck:'+user+'@'+host,'-N',''],capture_output=True,text=True,timeout=20)
+        p=subprocess.run(['ssh-keygen','-q','-t','ed25519','-f',str(path),'-C','server-deck:'+user+'@'+host+':'+str(port),'-N',''],capture_output=True,text=True,timeout=20)
         if p.returncode:raise RuntimeError(p.stderr.strip() or 'Не удалось создать SSH-ключ')
         path.chmod(0o600);public_path=pathlib.Path(str(path)+'.pub');public_path.chmod(0o644)
         public=public_path.read_text().strip()
@@ -96,20 +243,23 @@ def generate_key(data):
     finally:reservation.rmdir()
     script='set -e\numask 077\nmkdir -p "$HOME/.ssh"\nchmod 700 "$HOME/.ssh"\ntouch "$HOME/.ssh/authorized_keys"\ngrep -qxF '+shlex.quote(public)+' "$HOME/.ssh/authorized_keys" || printf \'%s\\n\' '+shlex.quote(public)+' >> "$HOME/.ssh/authorized_keys"\nchmod 600 "$HOME/.ssh/authorized_keys"'
     install=('sh -c ' if user=='root' else 'sudo -H -u '+shlex.quote(user)+' sh -c ')+shlex.quote(script)
-    connect=shlex.join((['runuser','-u','serverdeck','--'] if public_access.ORIGIN else [])+['ssh','-i',str(path),'-p',str(port),'-o','IdentitiesOnly=yes',user+'@'+host])
+    connect=shlex.join((['runuser','-u','serverdeck','--'] if public_access.ORIGIN else [])+['ssh','-F',os.devnull,'-i',str(path),'-p',str(port),'-o','IdentitiesOnly=yes','-o','IdentityAgent=none','-o','UpdateHostKeys=no',user+'@'+host])
     return dict(key=name,publicKey=public,fingerprint=fingerprint,installCommand=install,connectCommand=connect,host=host,user=user)
 
-def ssh(s, payload):
-    command = ['ssh', '-i', str(KEYDIR/s['key']), '-p', str(s['port']), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=2', s['user']+'@'+s['host'], 'python3 - ' + __import__('shlex').quote(json.dumps(payload))]
+def ssh(s, payload, *, isolated=False):
+    options = ['-F', os.devnull, '-o', 'IdentityAgent=none', '-o', 'UpdateHostKeys=no'] if isolated else []
+    command = ['ssh', *options, '-i', str(KEYDIR/s['key']), '-p', str(s['port']), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=5', '-o', 'ServerAliveCountMax=2', s['user']+'@'+s['host'], 'python3 - ' + shlex.quote(json.dumps(payload))]
     p = subprocess.run(command, input=REMOTE, capture_output=True, text=True, timeout=65)
     if p.returncode: raise RuntimeError((p.stderr or p.stdout or 'SSH завершился с ошибкой')[-1800:])
     return json.loads(p.stdout)
 
 def refresh(s, force=False):
-    with LOCK:
-        guard=REFRESH_LOCKS.setdefault(s['id'],threading.RLock())
-    with guard:
+    with refresh_guard(s['id']):
         with LOCK:
+            if CONFIG.exists():
+                current=find(s['id'])
+                if current is None:return dict(ok=False,error='Сервер удалён из Server Deck.',checkedAt=time.time())
+                s=current
             old = CACHE.get(s['id'])
             if old and not force and time.time()-old['checkedAt'] < 20: return old
         started=time.monotonic();tcp_ok=False;tcp_ms=None
@@ -193,7 +343,7 @@ def register_discovered_services(sid):
     discovered=[x['unit'] for x in inventory['units'] if any(k in x['unit'] for k in known)]
     with LOCK:
         current=servers();target=next((x for x in current if x['id']==sid),None)
-        if target is None:return
+        if target is None or server_binding(target)!=server_binding(s):return
         target['services']=list(dict.fromkeys(target['services']+discovered));write_config(current);CACHE.pop(sid,None)
 
 def embedded(port):
@@ -277,6 +427,8 @@ def event(server, unit, action, ok, server_id=None):
 def panel_tunnel(s,panel):
     key=(s['id'],panel['port'],panel.get('scheme','http'),panel.get('path','/'))
     with LOCK:
+        current=find(s['id'])
+        if current is None or server_binding(current)!=server_binding(s):raise ValueError('Параметры сервера изменились.')
         previous=TUNNELS.get(key)
         if previous and previous[0].poll() is None: return previous[1]
         with socket.socket() as sock:
@@ -378,8 +530,11 @@ class Handler(BaseHTTPRequestHandler):
             with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool: results=list(pool.map(refresh,ss))
             return self.reply(200,{'servers':[dict(**s,status=r) for s,r in zip(ss,results)],'activity':HISTORY[:25]})
         if self.path == '/api/keys':
-            names=[p.name for p in KEYDIR.iterdir() if p.is_file() and p.name not in ('config','known_hosts','known_hosts.old','authorized_keys') and not p.name.endswith('.pub') and 'PRIVATE KEY' in p.read_text(errors='ignore')[:100]]
-            return self.reply(200,{'keys':names})
+            try:
+                with LOCK:result=inspect_keys(KEYDIR,servers(),KEY_TESTS)
+                return self.reply(200,result)
+            except OSError:
+                return self.reply(503,{'error':'Каталог SSH-ключей недоступен.'})
         return self.reply(404,{'error':'Не найдено'})
     def do_POST(self):
         origin=self.headers.get('Origin')
@@ -495,16 +650,13 @@ class Handler(BaseHTTPRequestHandler):
                     threading.Thread(target=c.resume,args=(job['id'],),daemon=True).start();return self.reply(200,{'ok':True})
                 raise ValueError('Неизвестное действие')
             if self.path == '/api/keys/generate':return self.reply(200,generate_key(d))
-            if self.path == '/api/servers':
-                s=valid_server(d)
-                # Verify identity and SSH before saving. Unknown host keys must be trusted explicitly outside this app.
-                inventory=ssh(s,{'action':'inventory'})
-                known=('x-ui','telemt','mtproxy','amnezia','awg-quick','zapret','caddy','nginx','fail2ban')
-                s['services']=[x['unit'] for x in inventory['units'] if any(k in x['unit'] for k in known)]
-                with LOCK:
-                    ss=servers()
-                    if any(x['host']==s['host'] and x['port']==s['port'] for x in ss): raise ValueError('Сервер уже добавлен')
-                    ss.append(s);write_config(ss)
+            if self.path == '/api/servers':return self.reply(200,add_server(d))
+            if self.path == '/api/servers/update':return self.reply(200,update_server(d))
+            if self.path == '/api/servers/remove':return self.reply(200,remove_server(d))
+            if self.path == '/api/keys/remove':
+                if set(d) != {'key', 'confirmed'} or d['confirmed'] is not True:
+                    raise ValueError('Подтвердите удаление локального SSH-ключа.')
+                with LOCK:remove_local_key(KEYDIR,d['key'],servers(),KEY_TESTS)
                 return self.reply(200,{'ok':True})
             s=find(d.get('server'))
             if not s: raise ValueError('Сервер не найден')
@@ -535,7 +687,9 @@ class Handler(BaseHTTPRequestHandler):
                     if parsed.scheme not in ('http','https') or not parsed.hostname or parsed.username or parsed.password:raise ValueError('Укажите HTTP(S)-адрес без логина и пароля')
                     panel=dict(name=name,url=url)
                 with LOCK:
-                    ss=servers();target=next(x for x in ss if x['id']==s['id']);items=target.setdefault('panels',[])
+                    ss=servers();target=next((x for x in ss if x['id']==s['id']),None)
+                    if target is None or server_binding(target)!=server_binding(s):raise ValueError('Параметры сервера изменились. Откройте форму заново.')
+                    items=target.setdefault('panels',[])
                     if any(p['name']==name for p in items):raise ValueError('Панель с таким названием уже есть')
                     items.append(panel);write_config(ss);CACHE.pop(s['id'],None)
                 return self.reply(200,{'ok':True})
@@ -551,7 +705,8 @@ class Handler(BaseHTTPRequestHandler):
                 available=ssh(s,{'action':'inventory'})
                 if unit not in [x['unit'] for x in available['units']]: raise ValueError('Служба не установлена на сервере')
                 with LOCK:
-                    ss=servers();target=next(x for x in ss if x['id']==s['id'])
+                    ss=servers();target=next((x for x in ss if x['id']==s['id']),None)
+                    if target is None or server_binding(target)!=server_binding(s):raise ValueError('Параметры сервера изменились. Перечитайте список служб.')
                     if unit not in target['services']: target['services'].append(unit)
                     write_config(ss);CACHE.pop(s['id'],None)
                 return self.reply(200,{'ok':True})
@@ -562,6 +717,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path != '/api/action' or action not in ('start','stop','restart','logs') or unit not in allowed: raise ValueError('Действие не разрешено')
             key=(s['id'],unit)
             with LOCK:
+                latest=find(s['id'])
+                if latest != s:raise ValueError('Настройки сервера изменились. Повторите проверку.')
                 c=control()
                 if s['id'] in c.busy:raise ValueError('На сервере выполняется задача центра управления')
                 if key in BUSY: raise ValueError('Действие для этой службы уже выполняется')

@@ -5,6 +5,7 @@ from urllib.parse import parse_qs,urlsplit,unquote
 from html import escape
 import public_access
 from asset_paths import static_directory
+from control import server_binding
 from panel_tls import pinned_https_connection
 
 HOP={'connection','keep-alive','proxy-authenticate','proxy-authorization','te','trailer','transfer-encoding','upgrade','content-length','set-cookie','x-frame-options','content-security-policy','access-control-allow-origin','access-control-allow-credentials','strict-transport-security'}
@@ -66,7 +67,13 @@ class EmbeddedManager:
         key=(s['id'],panel)
         with self.lock:
             if self.revoked:raise ValueError('Войдите в Server Deck заново')
+            current=self.control().server(s['id'])
+            if server_binding(current)!=server_binding(s):raise ValueError('Параметры сервера изменились. Откройте панель заново.')
             bridge=self.bridges.get(key)
+            if bridge and server_binding(bridge.s)!=server_binding(s):
+                del self.bridges[key]
+                bridge.close()
+                bridge=None
             if not bridge:
                 meta=self.credentials(s,panel)
                 if self.revoked:raise ValueError('Войдите в Server Deck заново')
@@ -82,6 +89,8 @@ class EmbeddedManager:
         if not changes:yield;return
         c=self.control();sid=bridge.s['id']
         with c.lock:
+            if server_binding(c.server(sid))!=server_binding(bridge.s):
+                raise ValueError('Параметры сервера изменились. Откройте панель заново.')
             if sid in c.busy:raise ValueError('На сервере уже выполняется задача Server Deck')
             c.busy.add(sid)
         try:
@@ -93,6 +102,15 @@ class EmbeddedManager:
     def close(self):
         self.revoked=True
         for b in list(self.bridges.values()):b.close()
+
+    def close_server(self,sid,binding):
+        with self.lock:
+            obsolete=[key for key,bridge in self.bridges.items()
+                      if key[0]==sid and (binding is None or server_binding(bridge.s)==binding)]
+            bridges=[self.bridges.pop(key) for key in obsolete]
+        for bridge in bridges:
+            try:bridge.close()
+            except OSError:pass
 
 class Bridge:
     def __init__(self,manager,s,panel,meta,target_port):

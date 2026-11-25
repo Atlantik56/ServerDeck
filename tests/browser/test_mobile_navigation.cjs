@@ -14,10 +14,12 @@ const contentTypes = {
 const now = Math.floor(Date.now() / 1000);
 const first = {
  id: 'first', name: 'Резервный сервер', host: '192.0.2.10', user: 'root', port: 22,
+ key: 'deck_fixture_first',
  status: { ok: false, checkedAt: now, error: 'SSH fixture error' }, services: [],
 };
 const second = {
  id: 'second', name: 'Сервер VPN с длинным названием', host: '192.0.2.20', user: 'root', port: 22,
+ key: 'deck_fixture_second',
  services: ['x-ui.service'],
  status: { ok: true, checkedAt: now, data: {
   cpu: 12, memory: { used: 1024, total: 2048 }, disk: { used: 2048, total: 4096 },
@@ -26,6 +28,7 @@ const second = {
   services: [{ unit: 'x-ui.service', state: 'active', loaded: true }], containers: [],
   awg: [{ interface: 'awg-fixture', port: 51820, rx: 1024, tx: 2048, online: 1, peers: 2, latestHandshake: now }],
   panels: [{ name: '3x-ui / LucX', localOnly: true }],
+  mtproxyl: { managerInstalled: true, webPanelState: 'missing', webPanelInstalled: false },
  } },
 };
 const job = (server, title) => ({
@@ -92,7 +95,26 @@ const gets = {
  '/api/panel-update': { supported: true, installed: { version: '1.6.0' }, latest: null, state: 'unknown', checkedAt: now },
 };
 
-function apiResponse(method, { pathname, searchParams, origin: requestOrigin }, data) {
+function createRegistryFixture() {
+ return {
+  servers: [first, second].map(server => ({ ...server })),
+  keys: new Set([first.key, second.key, 'deck_fixture_spare']),
+  origins: new Map([[second.key, { host: second.host, user: second.user }]]),
+  generated: 0,
+ };
+}
+
+function apiResponse(method, { pathname, searchParams, origin: requestOrigin }, data, registry) {
+ if (method === 'GET' && pathname === '/api/state') return { ...gets[pathname], servers: registry.servers };
+ if (method === 'GET' && pathname === '/api/keys') {
+  const keys = [...registry.keys];
+  const items = keys.map(name => {
+   const usedBy = registry.servers.filter(server => server.key === name)
+    .map(({ id, name, host, user, port }) => ({ id, name, host, user, port }));
+   return { name, usedBy, createdFor: registry.origins.get(name), removable: usedBy.length === 0, reason: usedBy.length ? 'Используется сервером' : '' };
+  });
+  return { keys, items };
+ }
  if (method === 'GET' && Object.hasOwn(gets, pathname)) {
   const result = gets[pathname];
   const server = searchParams.get('server');
@@ -101,6 +123,29 @@ function apiResponse(method, { pathname, searchParams, origin: requestOrigin }, 
    : result;
  }
  if (method !== 'POST') return null;
+ if (pathname === '/api/keys/generate') {
+  const key = `deck_fixture_generated_${++registry.generated}`;
+  registry.keys.add(key);
+  registry.origins.set(key, { host: data.host, user: data.user, port: Number(data.port) });
+  return {
+   key, host: data.host, user: data.user, fingerprint: 'SHA256:fixture-public-key',
+   installCommand: 'echo fixture-install-public-key', connectCommand: 'echo fixture-check-connection',
+  };
+ }
+ if (pathname === '/api/servers/update' && registry.keys.has(data.key)) {
+  const server = registry.servers.find(server => server.id === data.server);
+  if (!server) return null;
+  Object.assign(server, { name: data.name, host: data.host, user: data.user, port: Number(data.port), key: data.key });
+  return { ok: true, server: server.id };
+ }
+ if (pathname === '/api/servers/remove' && data.confirmed === true) {
+  registry.servers = registry.servers.filter(server => server.id !== data.server);
+  return { ok: true };
+ }
+ if (pathname === '/api/keys/remove' && data.confirmed === true && !registry.servers.some(server => server.key === data.key)) {
+  registry.keys.delete(data.key);
+  return { ok: true };
+ }
  if (pathname === '/api/action' && data?.action === 'logs') {
   return { ok: true, logs: 'fixture log: VPN service is running' };
  }
@@ -131,6 +176,7 @@ function assetResponse(pathname) {
 function preview() {
  const http = require('node:http');
  const port = Number(process.argv[3] || 4173);
+ const registry = createRegistryFixture();
  const server = http.createServer(async (request, response) => {
   const url = new URL(request.url, `http://127.0.0.1:${server.address().port}`);
   const { pathname } = url;
@@ -142,7 +188,7 @@ function preview() {
     for await (const chunk of request) body.push(chunk);
     try { data = JSON.parse(Buffer.concat(body).toString()); } catch { data = null; }
    }
-   const result = apiResponse(request.method, url, data);
+   const result = apiResponse(request.method, url, data, registry);
    response.writeHead(result ? 200 : 404, { 'Content-Type': 'application/json; charset=utf-8' });
    response.end(JSON.stringify(result || { error: 'Действие недоступно в демонстрационных данных' }));
    return;
@@ -160,6 +206,7 @@ async function fixture(context) {
  const unexpected = [];
  const posts = [];
  const reads = [];
+ const registry = createRegistryFixture();
  page.on('pageerror', error => errors.push(error.message));
  await page.route('**/*', async route => {
   const request = route.request();
@@ -173,7 +220,7 @@ async function fixture(context) {
    const data = method === 'POST' ? request.postDataJSON() : null;
    if (method === 'POST') posts.push({ path: url.pathname, data });
    if (method === 'GET') reads.push(url);
-   const json = apiResponse(method, url, data);
+   const json = apiResponse(method, url, data, registry);
    if (json) return route.fulfill({ json });
    unexpected.push(`${request.method()} ${url.pathname}`);
    return route.fulfill({ status: 404, json: { error: 'Unexpected fixture request' } });
@@ -182,7 +229,7 @@ async function fixture(context) {
  });
  await page.goto(origin);
  await page.locator(`#servers [data-open-server="${second.id}"]`).waitFor({ state: 'visible' });
- return { page, errors, unexpected, posts, reads };
+ return { page, errors, unexpected, posts, reads, registry };
 }
 
 async function noOverflow(page, view, width) {
@@ -249,6 +296,9 @@ async function navigationScenarios(browser, width) {
 
   await openSection(page, 'panels');
   await workspace.locator('.panel-tile').getByRole('heading', { name: '3x-ui / LucX' }).waitFor({ state: 'visible' });
+  await workspace.getByText('MTProxyL установлен. Веб-панель MTProxyL устанавливается отдельно.', { exact: true }).waitFor({ state: 'visible' });
+  assert.equal(await workspace.getByRole('button', { name: 'Открыть каталог компонентов', exact: true }).isVisible(), true);
+  assert.equal(await workspace.getByRole('button', { name: 'Открыть MTProxyL', exact: true }).count(), 0);
   assert.equal(await page.locator('.panel-tile:visible').count(), 1);
   assert.equal(await page.locator(`[data-add-panel="${second.id}"]:visible`).count(), 1);
   await noOverflow(page, 'Server panels', width);
@@ -387,12 +437,105 @@ async function navigationScenarios(browser, width) {
  }
 }
 
+async function registryScenarios(browser) {
+ const width = 390;
+ const context = await browser.newContext({ viewport: { width, height: 820 }, isMobile: true, hasTouch: true, serviceWorkers: 'block' });
+ try {
+  const { page, errors, unexpected, posts, registry } = await fixture(context);
+  const row = id => page.locator(`#servers [data-open-server="${id}"]`);
+  const modal = page.locator('#modal');
+  const edit = page.locator(`[data-edit-server="${second.id}"]`);
+  const form = modal.locator('#serverForm');
+  const keyInput = form.locator('[name="key"]');
+  const confirm = modal.locator('#registryConfirm');
+  const submit = modal.locator('#registryConfirmSubmit');
+  const generatedKey = 'deck_fixture_generated_1';
+  const updatedName = 'Сервер VPN после смены ключа';
+
+  await row(second.id).click();
+  await edit.click();
+  await form.waitFor({ state: 'visible' });
+  assert.equal(await form.locator('[name="host"]').inputValue(), second.host);
+  assert.equal(await keyInput.inputValue(), second.key);
+  assert.ok((await form.locator('#serverKeyBinding').innerText()).includes(`${second.name} · ${second.user}@${second.host}:${second.port}`));
+  assert.ok((await keyInput.locator(`option[value="${first.key}"]`).textContent()).includes(`${first.name} · ${first.user}@${first.host}:${first.port}`));
+  await keyInput.selectOption('deck_fixture_spare');
+  assert.equal(posts.length, 0, 'Selecting an existing key should not change the configured connection');
+  await form.locator('#generateKey').click();
+  await form.locator('#installCommand').waitFor({ state: 'visible' });
+  assert.equal(await keyInput.inputValue(), generatedKey);
+  assert.match(await form.locator('#serverKeyBinding').innerText(), /Без привязки · создан для/);
+  assert.match(await modal.innerText(), /fixture-install-public-key/);
+  assert.deepEqual(posts.map(({ path }) => path), ['/api/keys/generate']);
+  assert.equal(registry.servers.find(server => server.id === second.id).key, second.key);
+  await noOverflow(page, 'Server connection and generated public key instructions', width);
+
+  await form.locator('[name="name"]').fill(updatedName);
+  await form.locator('#saveServer').click();
+  await modal.waitFor({ state: 'hidden' });
+  await page.getByRole('heading', { name: updatedName, exact: true }).waitFor({ state: 'visible' });
+  const update = posts.at(-1);
+  assert.equal(update.path, '/api/servers/update');
+  assert.deepEqual({ ...update.data, port: Number(update.data.port) }, {
+   server: second.id, name: updatedName, host: second.host, user: second.user, port: second.port, key: generatedKey,
+  });
+  assert.equal(registry.servers.find(server => server.id === second.id).key, generatedKey);
+
+  await page.locator('[data-server-back]').click();
+  await page.locator('#manageKeys').click();
+  const keyButton = name => modal.locator(`[data-remove-key="${name}"]`);
+  await keyButton(second.key).waitFor({ state: 'visible' });
+  assert.equal(await keyButton(first.key).isDisabled(), true);
+  assert.equal(await keyButton(generatedKey).isDisabled(), true);
+  assert.equal(await keyButton(second.key).isEnabled(), true, 'Old local key becomes removable after the switch');
+  const currentKeyRow = modal.locator(`.server-key-row:has([data-remove-key="${generatedKey}"])`);
+  assert.ok((await currentKeyRow.locator('.server-key-bindings').innerText()).includes(`${updatedName} · ${second.user}@${second.host}:${second.port}`));
+  assert.ok((await modal.getByText(`Без привязки · создан для ${second.user}@${second.host}`, { exact: true }).count()) > 0);
+  await keyButton(second.key).click();
+  await confirm.waitFor({ state: 'visible' });
+  assert.equal(await confirm.isChecked(), false);
+  assert.equal(await submit.isDisabled(), true);
+  assert.match(await modal.innerText(), new RegExp(second.key));
+  assert.equal(posts.length, 2, 'Opening key deletion must not dispatch the operation');
+  await confirm.check();
+  await submit.click();
+  await keyButton(generatedKey).waitFor({ state: 'visible' });
+  assert.equal(await keyButton(second.key).count(), 0);
+  assert.deepEqual(posts.at(-1), { path: '/api/keys/remove', data: { key: second.key, confirmed: true } });
+  assert.equal(registry.keys.has(second.key), false);
+  await noOverflow(page, 'SSH key manager', width);
+  await modal.locator('#closeModal').click();
+
+  await row(second.id).click();
+  await edit.click();
+  await form.locator('#removeServer').click();
+  await confirm.waitFor({ state: 'visible' });
+  assert.equal(await confirm.isChecked(), false);
+  assert.equal(await submit.isDisabled(), true);
+  assert.ok((await modal.innerText()).includes(second.host));
+  assert.ok((await modal.innerText()).includes(updatedName));
+  assert.equal(posts.length, 3, 'Opening server deletion must not dispatch the operation');
+  await confirm.check();
+  await submit.click();
+  await row(first.id).waitFor({ state: 'visible' });
+  assert.equal(await row(second.id).count(), 0);
+  assert.deepEqual(posts.at(-1), { path: '/api/servers/remove', data: { server: second.id, confirmed: true } });
+  assert.equal(registry.keys.has(generatedKey), true, 'Removing a server only removes the registry entry');
+  assert.deepEqual(unexpected, [], 'Unexpected registry browser requests');
+  assert.deepEqual(errors, [], 'Uncaught registry browser errors');
+ } finally {
+  await context.close();
+ }
+}
+
 async function run() {
  const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
  const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_BIN || undefined });
  try {
   for (const width of [320, 390, 1440]) await navigationScenarios(browser, width);
   console.log('PASS directory and per-server workspace at 320, 390 and 1440px: services, embedded panel return, AWG, clients, backups, updates, catalog and history.');
+  await registryScenarios(browser);
+  console.log('PASS server connection editing, SSH key rotation and confirmed removal at 390px.');
  } finally {
   await browser.close();
  }

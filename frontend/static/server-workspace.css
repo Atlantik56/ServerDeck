@@ -175,8 +175,55 @@ body.filter-server.server-section-native #nativeDashboard {
 body[data-deck-design].filter-server :is(#servers, .content > .heading, .content > .section-bar),
 body[data-deck-design].filter-updates #updatesDashboard,
 body[data-deck-design].filter-activity #taskHistory,
-body[data-deck-design][class*="filter-"]:not(.filter-all) #refresh {
+body[data-deck-design][class*="filter-"]:not(.filter-all) :is(#refresh,#manageKeys) {
   display: none;
+}
+
+.server-key-list {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+}
+
+.server-key-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--ops-line, #29344d);
+}
+
+.server-key-row > div {
+  flex: 1 1 150px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.server-key-row p {
+  margin: 5px 0 0;
+  color: var(--ops-muted, #8fa1bd);
+}
+
+body[data-deck-design] .button.server-registry-danger {
+  background: #361f2a;
+  border-color: #764253;
+  color: #ffd0db;
+}
+
+body[data-deck-design] .button.server-registry-danger:hover:not(:disabled) {
+  background: #542737;
+}
+
+.server-key-bindings {
+  display: grid;
+  gap: 4px;
+  margin: 5px 0;
+  padding: 0;
+  list-style: none;
+  color: var(--ops-text);
+  overflow-wrap: anywhere;
 }
 
 .server-workspace-meta {

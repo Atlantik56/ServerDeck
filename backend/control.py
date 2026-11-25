@@ -10,6 +10,10 @@ MAGIC=b'SERVER-DECK-BACKUP-1\n'
 TERMINAL={'succeeded','failed','needs_review','reviewed'}
 REPOS={'lucx':'AlexeyLCP/lucx-ui','mtproxyl':'Liafanx/MTProxyL','mtproxyl-panel':'Liafanx/MTProxyL','telemt':'telemt/telemt'}
 
+def server_binding(server):
+    return [server.get(field) for field in ('host', 'port', 'user', 'key')]
+
+
 def atomic(path,value):
     temp=path.with_suffix('.tmp');fd=os.open(str(temp),os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
     with os.fdopen(fd,'w') as f:
@@ -109,6 +113,9 @@ class Control:
         if not s:raise ValueError('Сервер не найден')
         return s
 
+    def same_server(self, server):
+        return any(current == server for current in self.servers())
+
     def ssh(self,s,req,timeout=100):
         wrapper="import json,sys;e=json.load(sys.stdin);exec(compile(e['source'],'<server-deck-adapter>','exec'),{'__name__':'__main__','_DECK_REQUEST':e['request'],'_DECK_SOURCE':e['source']})"
         argv=['ssh','-i',str(self.keydir/s['key']),'-p',str(s['port']),'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o','ConnectTimeout=8','-o','ServerAliveInterval=5','-o','ServerAliveCountMax=2',s['user']+'@'+s['host'],'python3 -c '+shlex.quote(wrapper)]
@@ -140,7 +147,8 @@ class Control:
             if old and not force and time.time()-old['checkedAt']<30:return old
             try:row=dict(self.ssh(s,{'op':'catalog'}),server=s['id'],name=s['name'],host=s['host'],ok=True)
             except Exception as e:row=dict(server=s['id'],name=s['name'],host=s['host'],ok=False,error=str(e),clients=[],panels=[],inbounds=[],checkedAt=time.time())
-            with self.lock:self.clients_cache[s['id']]=row
+            with self.lock:
+                if self.same_server(s):self.clients_cache[s['id']]=row
             return row
         rows=self.inspect_servers(one,server_id)
         return {'servers':rows,'checkedAt':time.time()}
@@ -246,9 +254,11 @@ class Control:
                 if not entries or version!=entries[0]['version']:raise ValueError('Обновите список релизов и выберите последний стабильный выпуск MTProxyL')
         remote=self.ssh(s,dict(data,op='plan'))
         if kind=='restore':remote['request']['backup']=data['backup']
-        pid=secrets.token_hex(16);plan=dict(id=pid,server=s['id'],host=s['host'],createdAt=time.time(),expiresAt=time.time()+300,used=False,**remote)
-        with self.lock:self.plans[pid]=plan
-        return {k:v for k,v in plan.items() if k not in ('request','revision','used')}
+        pid=secrets.token_hex(16);plan=dict(id=pid,server=s['id'],host=s['host'],binding=server_binding(s),createdAt=time.time(),expiresAt=time.time()+300,used=False,**remote)
+        with self.lock:
+            if server_binding(self.server(s['id']))!=plan['binding']:raise ValueError('Параметры сервера изменились. Выполните новый предпросмотр.')
+            self.plans[pid]=plan
+        return {k:v for k,v in plan.items() if k not in ('request','revision','used','binding')}
 
     def software(self,force=False,*,server_id=None):
         def one(s):
@@ -256,7 +266,8 @@ class Control:
             if old and not force and time.time()-old['checkedAt']<60:return old
             try:row=dict(server=s['id'],name=s['name'],host=s['host'],ok=True,inventory=self.ssh(s,{'op':'software-inventory'}),checkedAt=time.time())
             except Exception as e:row=dict(server=s['id'],name=s['name'],host=s['host'],ok=False,error=str(e),checkedAt=time.time())
-            with self.lock:self.software_cache[s['id']]=row
+            with self.lock:
+                if self.same_server(s):self.software_cache[s['id']]=row
             return row
         rows=self.inspect_servers(one,server_id)
         projects=self.scoped_projects(self.projects.request_refresh(force),server_id)
@@ -284,6 +295,7 @@ class Control:
             if p['request']['kind']=='reboot':return self.reboots.execute(p,confirmation)
             if p['request']['kind']=='service-restart':return self.service_restarts.execute(p,confirmation)
             if confirmation!=p['host']:raise ValueError('Для подтверждения введите IP/имя сервера')
+            if server_binding(self.server(p['server']))!=p.get('binding'):raise ValueError('Параметры сервера изменились. Выполните новый предпросмотр.')
             if p['server'] in self.busy:raise ValueError('На этом сервере уже выполняется задача')
             p['used']=True;self.busy.add(p['server'])
             jid=secrets.token_hex(16);job=dict(id=jid,server=p['server'],host=p['host'],title=p['summary']['title'],kind=p['request']['kind'],state='backing_up',createdAt=time.time(),expiresAt=p['expiresAt'],backups=[])
@@ -294,8 +306,8 @@ class Control:
 
     def backup_job(self,sid,panel):
         if panel not in ('lucx','mtproxyl'):raise ValueError('Неизвестная панель')
-        s=self.server(sid)
         with self.lock:
+            s=self.server(sid)
             if sid in self.busy:raise ValueError('На сервере уже выполняется задача')
             self.busy.add(sid);jid=secrets.token_hex(16)
             job=dict(id=jid,server=sid,host=s['host'],title='Резервная копия · '+panel,kind='backup',state='running',createdAt=time.time(),backups=[])
