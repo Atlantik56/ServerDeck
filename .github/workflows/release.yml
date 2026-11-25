@@ -1,0 +1,48 @@
+name: Server Deck Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: github.event_name == 'workflow_dispatch' || github.event.created
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: server-deck-release-${{ github.ref }}
+
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Build and test the runtime package
+        shell: bash
+        run: |
+          version=$(git show HEAD:VERSION)
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::The version tag must match VERSION in the tagged commit."
+            exit 1
+          fi
+          python3 scripts/test.py --pattern test_panel_release.py
+          python3 scripts/package_release.py --revision HEAD --output "$RUNNER_TEMP/server-deck-runtime.tar.gz"
+
+      - name: Publish the stable release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$RUNNER_TEMP/server-deck-runtime.tar.gz" \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes \
+            --title "Server Deck ${GITHUB_REF_NAME#v}" \
+            --latest
