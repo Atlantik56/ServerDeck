@@ -53,3 +53,42 @@ body label.action-confirm:focus-within{outline:2px solid var(--accent,#6484ff);o
   margin-left: 0;
  }
 }
+.client-config-item {
+  margin-top: 18px;
+}
+
+.client-config-item textarea {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  margin: 0 0 8px;
+  resize: vertical;
+  font-family: var(--ops-mono, monospace);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.client-config-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.control-secret :is(.client-config-status, .client-config-created) {
+  color: var(--ops-text, #e4eaf5);
+}
+
+.client-config-status:empty {
+  margin: 0;
+}
+
+@media (max-width: 600px) {
+  .client-config-item textarea {
+    font-size: 16px;
+  }
+
+  .client-config-actions .button {
+    flex: 1 1 130px;
+    min-height: 44px;
+  }
+}

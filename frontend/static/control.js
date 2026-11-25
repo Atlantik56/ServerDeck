@@ -1,4 +1,4 @@
-let controlStatus={jobs:[],backups:[]},controlUpdates=null,clientRows=[],controlPoll=null;
+let controlStatus={jobs:[],backups:[]},controlUpdates=null,clientRows=[],controlPoll=null,pendingClientConfig=null;
 let updatesServerId='',historyServerId='',controlUpdatesScope='';
 const clientCatalogs=new Map();
 const updateReleaseChoices=new Map();
@@ -128,7 +128,9 @@ function clientForm(c=null){
  };form.elements.server.onchange=update;form.elements.panel.onchange=update;update();
  const initial=Object.fromEntries([...new FormData(form)]);
  form.onsubmit=async e=>{
-  e.preventDefault();$('#previewClient').disabled=true;$('#clientFormError').textContent='';
+  e.preventDefault();
+  const preview=form.querySelector('#previewClient'),error=form.querySelector('#clientFormError');
+  preview.disabled=true;error.textContent='';
   try{
    const panel=c?.panel||form.elements.panel.value,server=scoped||c?.server||form.elements.server.value,fields={};
    for(const k of ['quota','limitIp','expires',...(panel==='lucx'?['comment']:['maxConnections','rateUp','rateDown'])]){
@@ -139,11 +141,12 @@ function clientForm(c=null){
    if(editing&&!Object.keys(fields).length)throw Error('Настройки не изменились');
    const request={kind:'client',server,panel,action:editing?'edit':'create',name:form.elements.name.value,fields};
    if(!editing&&panel==='lucx')request.inboundIds=[Number(form.elements.inbound.value)];
-   const plan=await api('/api/control/plan',request);showControlPlan(plan);
-  }catch(e){$('#clientFormError').textContent=e.message;$('#previewClient').disabled=false}
+   const plan=await api('/api/control/plan',request);
+   if(form.isConnected&&$('#modal').open)showControlPlan(plan,editing?null:{server,panel,name:request.name});
+  }catch(e){error.textContent=e.message;preview.disabled=false}
  };
 }
-function showControlPlan(plan){
+function showControlPlan(plan,newClient=null){
  const server=state.servers.find(s=>s.id===plan.server),targetName=server?.name||plan.name||'Выбранный сервер';
  const info=plan.summary,labels={enabled:'Доступ включён',quota:'Квота, байт',expires:'Срок, мс Unix',limitIp:'Максимум IP',comment:'Комментарий',maxConnections:'Максимум соединений',rateUp:'Скорость от клиента, бит/с',rateDown:'Скорость к клиенту, бит/с'};
  const actionLabel=info.title.startsWith('Создать клиента')?'Создать клиента':info.title.startsWith('Изменить клиента')?'Применить изменения клиента':info.title.startsWith('Удалить клиента')?'Удалить клиента':info.title.startsWith('Восстановить резервную копию')?'Восстановить копию':info.component==='os'?'Обновить ОС':info.component==='os-index'?'Обновить список пакетов':info.title.startsWith('Откат')?'Выполнить откат':info.title.startsWith('Установить')?'Установить компонент':info.component?'Обновить компонент':'Применить изменение';
@@ -153,27 +156,170 @@ function showControlPlan(plan){
  $('#cancelControlPlan').onclick=()=>$('#modal').close();checkbox.onchange=()=>{button.disabled=submitted||!checkbox.checked};
  form.onsubmit=async e=>{
   e.preventDefault();if(submitted||!checkbox.checked)return;submitted=true;button.disabled=true;checkbox.disabled=true;error.textContent='';
-  try{await api('/api/control/execute',{plan:plan.id,confirmation:plan.host})}
+  let job;
+  try{job=await api('/api/control/execute',{plan:plan.id,confirmation:plan.host})}
   catch(e){error.textContent=e.message+' Перечитайте результат задачи и откройте новый предпросмотр перед следующим действием.';return}
-  if(form.isConnected)$('#modal').close();toast('Задача создана. Сначала выполняется резервное копирование.');
+  if(form.isConnected&&$('#modal').open){
+   if(newClient&&job?.id)showClientCreation(job.id,newClient);
+   else $('#modal').close();
+  }
+  toast('Задача создана. Сначала выполняется резервное копирование.');
   try{await loadControlStatus()}catch(e){toast('Задача принята. Не удалось обновить статус: '+e.message)}
  };
 }
+
+function showClientCreation(id,client){
+ modal('Создание клиента · '+client.name,`<p id="clientCreateStatus" role="status">Создаём клиента и подготавливаем конфигурацию…</p>
+  <div class="modal-actions"><button type="button" class="button secondary" id="checkClientCreate">Проверить статус</button></div>`);
+ const status=$('#clientCreateStatus');
+ const check=$('#checkClientCreate');
+ pendingClientConfig={id,client,status};
+ check.onclick=async()=>{
+  check.disabled=true;
+  try{await loadControlStatus()}
+  catch(e){status.textContent='Не удалось проверить статус. Повторите проверку.'}
+  finally{check.disabled=false}
+ };
+}
+
+function updateClientCreation(){
+ const pending=pendingClientConfig;
+ if(!pending)return false;
+ const {id,client,status}=pending;
+ if(!status.isConnected||!$('#modal').open){
+  pendingClientConfig=null;
+  return false;
+ }
+ const job=controlStatus.jobs.find(entry=>entry.id===id&&entry.server===client.server);
+ if(!job)return false;
+ if(job.state==='succeeded'){
+  pendingClientConfig=null;
+  void openClientConfig(client,true);
+  const scope=controlWorkspaceId('clients');
+  if(activeControlView('clients',scope)&&(!scope||scope===client.server)){
+   void readClientCatalog(scope,true).then(()=>{
+    if(activeControlView('clients',scope))renderClients();
+   }).catch(()=>{toast('Не удалось обновить список клиентов. Воспользуйтесь кнопкой «Обновить».')});
+  }
+  return true;
+ }
+ if(['failed','needs_review','reviewed'].includes(job.state)){
+  pendingClientConfig=null;
+  status.textContent=job.state==='failed'?'Создание клиента завершилось с ошибкой. Проверьте историю задач.':'Результат создания клиента требует проверки в истории задач.';
+  $('#checkClientCreate').hidden=true;
+  return false;
+ }
+ status.textContent=(jobNames[job.state]||'Создаём клиента')+'… После завершения здесь появится конфигурация.';
+ return false;
+}
+
+const clientConfigSchemes=new Set(['http','https','tg','mtproto','vless','vmess','trojan','ss','ssr','ssconf','shadowsocks','socks','socks5','hysteria','hysteria2','hy2','tuic','wireguard','wg','awg','amneziawg','amnezia','vpn']);
+function clientConfigItems(data,name){
+ const items=[],seen=new Set();
+ function collect(value,subscription){
+  if(typeof value==='string'){
+   for(const line of value.split(/\r?\n/)){
+    const body=line.trim();
+    const scheme=/^([a-z][a-z0-9+.-]*):\/\/[^\s<>"']+$/i.exec(body)?.[1].toLowerCase();
+    if(!clientConfigSchemes.has(scheme)||seen.has(body))continue;
+    seen.add(body);
+    const telegramWeb=/^https:\/\/t\.me\/proxy(?:\?|$)/i.test(body);
+    const title=subscription?'Ссылка подписки':scheme==='tg'?'Ссылка для Telegram':telegramWeb?'Ссылка t.me':scheme==='https'||scheme==='http'?'Ссылка подключения':scheme.toUpperCase();
+    items.push({title,body});
+   }
+  }else if(value&&typeof value==='object'){
+   for(const part of Object.values(value))collect(part,subscription);
+  }
+ }
+ collect(data.links,false);
+ collect(data.subscriptions,true);
+ for(const [id,body] of Object.entries(data.awg||{})){
+  if(typeof body!=='string'||!body.trim()||!/^\d+$/.test(id))continue;
+  items.push({title:'AmneziaVPN · подключение '+id,body,filename:'AmneziaVPN-'+name.replace(/[^A-Za-z0-9_-]/g,'_')+'-'+id+'.conf'});
+ }
+ return items;
+}
+
+async function copyClientConfig(item,field,status){
+ try{
+  await navigator.clipboard.writeText(item.body);
+  status.textContent='Скопировано';
+ }catch(_){
+  if(!field.isConnected||!$('#modal').open)return;
+  field.focus();
+  field.select();
+  field.setSelectionRange(0,field.value.length);
+  status.textContent='Скопируйте выделенный текст вручную.';
+ }
+}
+
+function downloadClientConfig(item){
+ const url=URL.createObjectURL(new Blob([item.body],{type:'text/plain'}));
+ const link=document.createElement('a');
+ link.href=url;
+ link.download=item.filename;
+ link.click();
+ setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+async function openClientConfig(client,created=false){
+ modal('Конфигурация · '+client.name,`<div class="control-secret" data-client-config>${ctrlLoading()}</div>`);
+ const root=$('[data-client-config]');
+ try{
+  const data=await api('/api/control/links',{server:client.server,panel:client.panel,name:client.name});
+  if(!root.isConnected||!$('#modal').open)return;
+  const items=clientConfigItems(data,client.name);
+  root.innerHTML=`${created?'<p class="client-config-created" role="status">Клиент создан.</p>':''}
+   ${items.length?`<p>Передавайте ссылки и конфиги только владельцу подключения.</p>${items.map((item,index)=>`
+    <section class="client-config-item">
+     <h3 id="clientConfigLabel${index}">${esc(item.title)}</h3>
+     <textarea readonly rows="${item.filename?6:2}" spellcheck="false" aria-labelledby="clientConfigLabel${index}">${esc(item.body)}</textarea>
+     <div class="client-config-actions">
+      <button type="button" class="button primary" data-copy-client-config aria-describedby="clientConfigLabel${index}">${item.filename?'Скопировать конфиг':'Скопировать ссылку'}</button>
+      ${item.filename?'<button type="button" class="button secondary" data-download-client-config>Скачать .conf</button>':''}
+     </div>
+     <p class="client-config-status" role="status"></p>
+    </section>`).join('')}`:'<p>Панель не вернула ссылок или конфигураций для этого клиента.</p>'}`;
+  root.querySelectorAll('.client-config-item').forEach((section,index)=>{
+   const item=items[index];
+   const field=section.querySelector('textarea');
+   const status=section.querySelector('[role="status"]');
+   section.querySelector('[data-copy-client-config]').onclick=()=>copyClientConfig(item,field,status);
+   const download=section.querySelector('[data-download-client-config]');
+   if(download)download.onclick=()=>downloadClientConfig(item);
+  });
+  if(created)root.querySelector('[data-copy-client-config]')?.focus({preventScroll:true});
+ }catch(_){
+  if(!root.isConnected||!$('#modal').open)return;
+  root.innerHTML=`<p class="form-error" role="alert">${created?'Клиент создан, но конфигурацию получить не удалось.':'Не удалось получить конфигурацию клиента.'}</p>
+   <button type="button" class="button secondary">Повторить загрузку</button>`;
+  root.querySelector('button').onclick=()=>openClientConfig(client,created);
+ }
+}
+
+$('#modal')?.addEventListener('close',()=>{
+ if($('#modal').open)return;
+ pendingClientConfig=null;
+ $('[data-client-config]')?.remove();
+});
+
 async function loadControlStatus(){
  controlStatus=await api('/api/control');renderJobs();window.renderMaintenance?.();
+ const createdClient=updateClientCreation();
  const running=hasRunningControlJob(controlStatus);
  if(running&&!controlPoll)controlPoll=setInterval(async()=>{
   try{
    const prior=controlStatus;
-   await loadControlStatus();
+   const completedCreation=await loadControlStatus();
    const workspace=window.activeServerWorkspace?.(),view=workspace?.section||filter,server=workspace?.id||'';
    const finished=hasRunningControlJob(prior,server)&&!hasRunningControlJob(controlStatus,server);
    if(view==='software'&&finished)await loadSoftware(true);
    if(view==='backups'&&clientCatalogs.has(server))renderBackups();
-   if(view==='clients'&&finished)await loadControlClients(true);
+   if(view==='clients'&&finished&&!completedCreation)await loadControlClients(true);
   }catch(e){toast(e.message)}
  },3500);
  if(!running&&controlPoll){clearInterval(controlPoll);controlPoll=null}
+ return createdClient;
 }
 function hasRunningControlJob(snapshot,server=''){
  return snapshot.jobs.some(j=>(!server||j.server===server)&&!['succeeded','failed','needs_review','reviewed'].includes(j.state));
@@ -271,12 +417,7 @@ document.addEventListener('click',async e=>{
   if(op==='add-client')clientForm();
   if(op==='edit-client')clientForm(c);
   if(op==='toggle-client'||op==='delete-client')showControlPlan(await api('/api/control/plan',{kind:'client',server:c.server,panel:c.panel,name:c.name,action:op==='delete-client'?'delete':'edit',fields:op==='delete-client'?{}:{enabled:!c.enabled}}));
-  if(op==='links'){
-   modal('Конфигурация · '+c.name,ctrlLoading());const r=await api('/api/control/links',{server:c.server,panel:c.panel,name:c.name});
-   const sections=[{title:'Ссылки и подписки',body:JSON.stringify({links:r.links,subscriptions:r.subscriptions},null,2)},...Object.entries(r.awg||{}).map(([id,body])=>({title:'AmneziaVPN · inbound '+id,body,filename:'AmneziaVPN-'+c.name.replace(/[^A-Za-z0-9_-]/g,'_')+'-'+id+'.conf'}))];
-   $('#modalBody').innerHTML=`<div class="control-secret"><p>Ссылки и конфиги содержат доступ к VPN/прокси. Передавайте их только владельцу подключения.</p>${sections.map((s,i)=>`<h3>${esc(s.title)}</h3><pre class="logs">${esc(s.body)}</pre><div class="modal-actions"><button class="button secondary" id="copyControlSecret${i}">Копировать</button>${s.filename?`<button class="button primary" id="downloadControlSecret${i}">Скачать .conf</button>`:''}</div>`).join('')}</div>`;
-   sections.forEach((s,i)=>{$('#copyControlSecret'+i).onclick=async()=>{try{await navigator.clipboard.writeText(s.body);toast('Скопировано')}catch(e){toast('Скопируйте текст вручную')}};if(s.filename)$('#downloadControlSecret'+i).onclick=()=>{const blob=new Blob([s.body],{type:'text/plain'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=s.filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}});
-  }
+  if(op==='links')await openClientConfig(c);
   if(op==='refresh-backups'){await loadControlStatus();renderBackups()}
   if(op==='create-backup'){const server=controlWorkspaceId('backups')||$('#backupServer')?.value,panel=$('#backupPanel')?.value;if(!server||!panel)throw Error('Нет доступной панели для резервного копирования');await api('/api/control/backup',{server,panel});toast('Копирование началось. Службы продолжают работать.');await loadControlStatus();renderBackups()}
   if(op==='download-backup')await downloadControl('/api/control/download?id='+b.dataset.backup,'server-deck-'+b.dataset.backup+'.sdbackup');
